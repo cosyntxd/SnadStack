@@ -1,2 +1,6 @@
 .DS_Store
 /target
+
+/web/*
+!/web/run.sh
+!/web/index.html

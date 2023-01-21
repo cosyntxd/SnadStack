@@ -13,8 +13,25 @@ use snad_stack::{
     world::World,
     input::InputHelper,
 };
+use std::rc::Rc;
+
 
 fn main() {
+    #[cfg(target_arch = "wasm32")]
+    {
+        std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+        console_log::init_with_level(log::Level::Info)
+            .expect("Failed setting logger");
+        wasm_bindgen_futures::spawn_local(run());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        pollster::block_on(run());
+    }
+}
+
+async fn run() {
     // The cellular automata grid
     let cell_count = LogicalSize::new(200, 100);
     let mut enviornment = World::new(cell_count.width, cell_count.height, 16);
@@ -30,14 +47,56 @@ fn main() {
             .with_min_inner_size(LogicalSize::new(150,75))
             .build(&event_loop)
             .expect("Could not instantiate window");
+    let window = Rc::new(window);
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::JsCast;
+        use winit::platform::web::WindowExtWebSys;
+
+        let window = Rc::clone(&window);
+
+        // Select element to append canvas to
+        let target_div = web_sys::window()
+            .and_then(|win| win.document())
+            .and_then(|win| win.body())
+            .expect("Failed to select div");
+        
+
+        target_div.append_child(&web_sys::Element::from(window.canvas()))
+            .ok()
+            .expect("Failed to append canvas");
+        
+        // Get client window size
+        let get_element_size = || {
+            let client_window = web_sys::window().unwrap();
+            LogicalSize::new(
+                client_window.inner_width().unwrap().as_f64().unwrap(),
+                client_window.inner_height().unwrap().as_f64().unwrap(),
+            )
+        };
+
+        window.set_inner_size(get_element_size());
+
+        // Register resize event to resize window
+        let closure = wasm_bindgen::closure::Closure::wrap(Box::new(
+            move |_e: web_sys::Event| window.set_inner_size(get_element_size())
+        ) as Box<dyn FnMut(_)>);
+        web_sys::window()
+            .unwrap()
+            .add_event_listener_with_callback("resize", closure.as_ref().unchecked_ref())
+            .expect("Failed to register resize event");
+        closure.forget();
+    }
 
     // Create window surface
     let mut pixels = {
         let window_size = window.inner_size();
         let surface_texture = SurfaceTexture::new(
-            window_size.width, window_size.height, &window);
+            window_size.width, window_size.height, window.as_ref());
         PixelsBuilder::new(cell_count.width as u32, cell_count.height as u32, surface_texture)
-            .build()
+            .build_async()
+            .await
             .expect("Could not instantiate Pixels")
     };
 
