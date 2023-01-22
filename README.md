@@ -11,7 +11,7 @@ cargo run --release
 
 # Run on Web:
 ```properties
-sh web/run.sh
+sh web/run.sh --release
 ```
 
 # Licence
