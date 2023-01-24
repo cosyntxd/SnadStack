@@ -9,7 +9,6 @@ use pixels::{
     SurfaceTexture
 };
 use snad_stack::{
-    cells::{Cell, CellType},
     world::World,
     input::InputHelper,
 };
@@ -119,14 +118,13 @@ async fn run() {
             },
             Event::MainEventsCleared => {
                 if let Some((mouse_x, mouse_y)) = controller.pixel_position(&pixels) {
-                    let mut cell = & mut enviornment.grid[mouse_y][mouse_x];
-                    cell.selected = true;
-                    if controller.mouse_clicked(MouseButton::Left) {
-                        cell.rgb = Cell::rgb_ranges(CellType::Sand)
-                    }
-                    if controller.mouse_clicked(MouseButton::Right) {
-                        cell.rgb = Cell::rgb_ranges(CellType::Air)
-                    }
+                    enviornment.place_circle(
+                        mouse_x,
+                        mouse_y,
+                        controller.selection_size(),
+                        controller.material,
+                        controller.mouse_clicked(MouseButton::Left)
+                    );
                     #[cfg(debug_assertions)]{
                         println!("{:?}", (mouse_x, mouse_y))
                     }
@@ -135,7 +133,8 @@ async fn run() {
                 window.request_redraw();
             },
             Event::RedrawRequested(_) => {
-                if pixels.render().is_err(){
+                if let Err(e) = pixels.render() {
+                    log::warn!("{e}");
                     control_flow.set_exit();
                 }
             }

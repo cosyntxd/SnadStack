@@ -1,4 +1,4 @@
-use crate::cells::Cell;
+use crate::cells::{Cell, CellType};
 
 pub struct World {
     pub grid: Vec<Vec<Cell>>,
@@ -25,6 +25,25 @@ impl World {
             row.resize_with(self.width, Default::default);
         }
     }
+    pub fn place_circle(&mut self, x: usize, y: usize, radius: isize, material: CellType, place: bool) {
+        let diameter = radius*2;
+        for index_y in 0..diameter {
+            for index_x in 0..diameter {
+                let distance_squared = (index_x - radius).pow(2) + (index_y - radius).pow(2);
+                let in_circle = distance_squared < radius.pow(2);
+                if in_circle {
+                    let x = (index_x+x as isize - radius).clamp(0, self.width as isize -1) as usize;
+                    let y = (index_y+y as isize - radius).clamp(0, self.height as isize -1) as usize;
+                    let mut cell = &mut self.grid[y][x];
+                    if place {
+                        *cell = Cell::new(material);
+                    }
+                    cell.selected = true; 
+                }
+            }
+        }
+    }
+
     pub fn render(&mut self, pixels: &mut [u8]) {
         for (i, pixel) in pixels.chunks_exact_mut(4).enumerate() {
             let x = i % self.width;
