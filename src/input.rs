@@ -37,6 +37,8 @@ impl InputHelper {
                         self.material = match key_code {
                             VirtualKeyCode::A => CellType::Air,
                             VirtualKeyCode::S => CellType::Sand,
+                            VirtualKeyCode::W => CellType::Water,
+                            VirtualKeyCode::R => CellType::Stone,
                             // If the key is not recognized, keep currently selected material
                             _ => self.material
                         };
