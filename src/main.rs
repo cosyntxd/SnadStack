@@ -117,6 +117,7 @@ async fn run() {
                 enviornment.resize(width, height);
             },
             Event::MainEventsCleared => {
+                enviornment.simulate(1);
                 if let Some((mouse_x, mouse_y)) = controller.pixel_position(&pixels) {
                     enviornment.place_circle(
                         mouse_x,

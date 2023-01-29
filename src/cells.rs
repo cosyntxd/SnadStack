@@ -3,6 +3,7 @@ pub struct Cell {
     pub material: CellType,
     pub rgb: [u8; 3],
     pub selected: bool,
+    pub updated: u8,
 }
 impl Default for Cell {
     fn default() -> Self {
@@ -10,9 +11,17 @@ impl Default for Cell {
             material: CellType::Air,
             rgb: Self::rgb_ranges(CellType::Air),
             selected: false,
+            updated: 0,
         }
     }
 }
+
+pub const NONE_CELL: Cell = Cell {
+    material: CellType::None,
+    rgb: [0,0,0],
+    selected: false,
+    updated: 0,
+};
 
 impl Cell {
     pub fn new(material: CellType) -> Self {
@@ -43,8 +52,9 @@ impl Cell {
         rgb
     }
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CellType {
+    None,
     Air,
     Water,
     Sand,
