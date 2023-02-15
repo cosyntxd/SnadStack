@@ -48,15 +48,15 @@ impl<'a> CellsAPI<'a> {
             return
         }
         unsafe {
-            let pa: *mut Cell = &mut self.world.grid[self.y as usize][self.x as usize];
-            let pb: *mut Cell = &mut self.world.grid[target_y as usize][target_x as usize];
+            let current: *mut Cell = &mut self.world.grid[self.y as usize][self.x as usize];
+            let target: *mut Cell = &mut self.world.grid[target_y as usize][target_x as usize];
             // Stop material being simulated twice in a single frame
-            if (*pb).updated == self.world.time || (*pa).updated == self.world.time{
+            if (*current).updated == self.world.time{
                 return
             }
-            (*pa).updated = self.world.time;
-            (*pb).updated = self.world.time;
-            ptr::swap(pa, pb);
+            (*current).updated = self.world.time;
+            (*target).updated = self.world.time;
+            ptr::swap(current, target);
         }
     }
     pub fn advance_time(&mut self) {
