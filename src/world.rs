@@ -4,7 +4,7 @@ use crate::{
 };
 
 pub struct World {
-    pub grid: Vec<Vec<Cell>>,
+    pub grid: Vec<Cell>,
     pub density: u32,
     pub width: usize,
     pub height: usize,
@@ -12,10 +12,11 @@ pub struct World {
 }
 impl World {
     pub fn new(width: i32, height: i32, density: u32) -> Self {
-        let height = height as usize;
-        let width = width as usize;
+        let height = (height as usize) / density as usize;
+        let width = (width as usize) / density as usize;
+        let grid = vec![Default::default(); width * height];
         Self {
-            grid: vec![vec![Default::default(); width]; height],
+            grid,
             density,
             width,
             height,
@@ -23,13 +24,14 @@ impl World {
         }
     }
     pub fn resize(&mut self, width: u32, height: u32) {
+        let grid: Vec<Cell> = vec![Default::default(); (width * height) as usize];
+
         self.width = width as usize;
         self.height = height as usize;
-        self.grid.resize(self.height, Default::default());
-        for row in self.grid.iter_mut() {
-            row.resize_with(self.width, Default::default);
-        }
+
+        self.grid = grid;
     }
+
     pub fn place_circle(&mut self, x: usize, y: usize, radius: isize, material: CellType, place: bool) {
         let diameter = radius*2;
         for index_y in 0..diameter {
@@ -39,7 +41,7 @@ impl World {
                 if in_circle {
                     let x = (index_x+x as isize - radius).clamp(0, self.width as isize -1) as usize;
                     let y = (index_y+y as isize - radius).clamp(0, self.height as isize -1) as usize;
-                    let mut cell = &mut self.grid[y][x];
+                    let mut cell = &mut self.grid[y * self.width + x];
                     if place {
                         *cell = Cell::new(material);
                     }
@@ -52,13 +54,15 @@ impl World {
         simulate_steps(self, steps)
     }
     pub fn render(&mut self, pixels: &mut [u8]) {
-        for (i, pixel) in pixels.chunks_exact_mut(4).enumerate() {
-            let x = i % self.width;
-            let y = i / self.width;
-            let cell = &mut self.grid[y][x];
-            pixel[0..3].copy_from_slice(&cell.rgb);
-            pixel[3] = 255 - (cell.selected as u8 * 96);
-            cell.selected = false;
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let index = x + y * self.width;
+                let cell = &mut self.grid[index];
+                let pixel = &mut pixels[4 * index..4 * index + 4];
+                pixel[0..3].copy_from_slice(&cell.rgb);
+                pixel[3] = 255 - (cell.selected as u8 * 96);
+                cell.selected = false;
+            }
         }
     }
 }

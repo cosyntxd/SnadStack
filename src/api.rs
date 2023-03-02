@@ -27,7 +27,7 @@ impl<'a> CellsAPI<'a> {
         self.y = y as isize;
     }
     pub fn current(&mut self) -> &mut Cell {
-        &mut self.world.grid[self.y as usize][self.x as usize]
+        &mut self.world.grid[self.y as usize * self.world.width + self.x as usize]
     }
     pub fn in_bounds(&mut self, x: isize, y: isize) -> bool{
         y < self.height && y >= 0 && x < self.width && x >= 0
@@ -40,7 +40,7 @@ impl<'a> CellsAPI<'a> {
         if !self.in_bounds(target_x, target_y)  {
             return &NONE_CELL;
         }
-        &self.world.grid[target_y as usize][target_x as usize]
+        &mut self.world.grid[target_y as usize * self.world.width + target_x as usize]
     }
     pub fn swap_offset(&mut self, x: isize, y: isize){
         let (target_x, target_y) = self.offset(x, y);
@@ -48,8 +48,8 @@ impl<'a> CellsAPI<'a> {
             return
         }
         unsafe {
-            let current: *mut Cell = &mut self.world.grid[self.y as usize][self.x as usize];
-            let target: *mut Cell = &mut self.world.grid[target_y as usize][target_x as usize];
+            let current: *mut Cell = &mut self.world.grid[self.y as usize * self.world.width + self.x as usize];
+            let target: *mut Cell = &mut self.world.grid[target_y as usize * self.world.width + target_x as usize];
             // Stop material being simulated twice in a single frame
             if (*current).updated == self.world.time{
                 return
