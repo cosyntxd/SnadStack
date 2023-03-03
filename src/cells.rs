@@ -18,7 +18,7 @@ impl Default for Cell {
 
 pub const NONE_CELL: Cell = Cell {
     material: CellType::None,
-    rgb: [0,0,0],
+    rgb: [0, 0, 0],
     selected: false,
     updated: 0,
 };
@@ -32,18 +32,18 @@ impl Cell {
             ..Default::default()
         }
     }
-    pub fn rgb_ranges(material: CellType) -> ([u8; 3]){
+    pub fn rgb_ranges(material: CellType) -> ([u8; 3]) {
         let random_variance = fastrand::i16(0..=100);
 
         let (rgb_start, rgb_end) = match material {
-            CellType::Air =>   ( [125, 201, 255], [125, 201, 255] ),
-            CellType::Water => ( [76, 153, 243],  [104, 175, 253] ),
-            CellType::Sand =>  ( [220,180,116],   [204, 164, 100] ),
-            CellType::Stone => ( [131, 143, 134], [110, 122, 113] ),
-            _ => ([255, 155, 61], [117, 36, 81] )
+            CellType::Air => ([125, 201, 255], [125, 201, 255]),
+            CellType::Water => ([76, 153, 243], [104, 175, 253]),
+            CellType::Sand => ([220, 180, 116], [204, 164, 100]),
+            CellType::Stone => ([131, 143, 134], [110, 122, 113]),
+            _ => ([255, 155, 61], [117, 36, 81]),
         };
 
-        let mut rgb = [0,0,0];
+        let mut rgb = [0, 0, 0];
         rgb.iter_mut().enumerate().for_each(|(index, value)| {
             let rgba_diff = rgb_end[index] - rgb_start[index];
             let rgba_change = rgba_diff * random_variance / 100;

@@ -1,26 +1,18 @@
-use winit::{
-    window::WindowBuilder,
-    event::{Event, WindowEvent, MouseButton},
-    event_loop::EventLoop,
-    dpi::LogicalSize,
-};
-use pixels::{
-    PixelsBuilder,
-    SurfaceTexture
-};
-use snad_stack::{
-    world::World,
-    input::InputHelper,
-};
+use pixels::{PixelsBuilder, SurfaceTexture};
+use snad_stack::{input::InputHelper, world::World};
 use std::rc::Rc;
-
+use winit::{
+    dpi::LogicalSize,
+    event::{Event, MouseButton, WindowEvent},
+    event_loop::EventLoop,
+    window::WindowBuilder,
+};
 
 fn main() {
     #[cfg(target_arch = "wasm32")]
     {
         std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-        console_log::init_with_level(log::Level::Info)
-            .expect("Failed setting logger");
+        console_log::init_with_level(log::Level::Info).expect("Failed setting logger");
         wasm_bindgen_futures::spawn_local(run());
     }
 
@@ -41,11 +33,11 @@ async fn run() {
 
     // Window
     let window = WindowBuilder::new()
-            .with_title("Snad Stack")
-            .with_inner_size(cell_count)
-            .with_min_inner_size(LogicalSize::new(150,75))
-            .build(&event_loop)
-            .expect("Could not instantiate window");
+        .with_title("Snad Stack")
+        .with_inner_size(cell_count)
+        .with_min_inner_size(LogicalSize::new(150, 75))
+        .build(&event_loop)
+        .expect("Could not instantiate window");
     let window = Rc::new(window);
 
     #[cfg(target_arch = "wasm32")]
@@ -60,12 +52,12 @@ async fn run() {
             .and_then(|win| win.document())
             .and_then(|win| win.body())
             .expect("Failed to select div");
-        
 
-        target_div.append_child(&web_sys::Element::from(window.canvas()))
+        target_div
+            .append_child(&web_sys::Element::from(window.canvas()))
             .ok()
             .expect("Failed to append canvas");
-        
+
         // Get client window size
         let get_element_size = || {
             let client_window = web_sys::window().unwrap();
@@ -78,9 +70,9 @@ async fn run() {
         window.set_inner_size(get_element_size());
 
         // Register resize event to resize window
-        let closure = wasm_bindgen::closure::Closure::wrap(Box::new(
-            move |_e: web_sys::Event| window.set_inner_size(get_element_size())
-        ) as Box<dyn FnMut(_)>);
+        let closure = wasm_bindgen::closure::Closure::wrap(Box::new(move |_e: web_sys::Event| {
+            window.set_inner_size(get_element_size())
+        }) as Box<dyn FnMut(_)>);
         web_sys::window()
             .unwrap()
             .add_event_listener_with_callback("resize", closure.as_ref().unchecked_ref())
@@ -91,12 +83,16 @@ async fn run() {
     // Create window surface
     let mut pixels = {
         let window_size = window.inner_size();
-        let surface_texture = SurfaceTexture::new(
-            window_size.width, window_size.height, window.as_ref());
-        PixelsBuilder::new(cell_count.width as u32, cell_count.height as u32, surface_texture)
-            .build_async()
-            .await
-            .expect("Could not instantiate Pixels")
+        let surface_texture =
+            SurfaceTexture::new(window_size.width, window_size.height, window.as_ref());
+        PixelsBuilder::new(
+            cell_count.width as u32,
+            cell_count.height as u32,
+            surface_texture,
+        )
+        .build_async()
+        .await
+        .expect("Could not instantiate Pixels")
     };
 
     // Run Every frame
@@ -104,18 +100,26 @@ async fn run() {
         control_flow.set_poll();
         controller.hook_events(&event);
         match event {
-            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
                 control_flow.set_exit();
-            },
-            Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
+            }
+            Event::WindowEvent {
+                event: WindowEvent::Resized(size),
+                ..
+            } => {
                 let width = size.width / enviornment.density;
                 let height = size.height / enviornment.density;
-                pixels.resize_surface(size.width, size.height)
+                pixels
+                    .resize_surface(size.width, size.height)
                     .expect("Failed to resize surface");
-                pixels.resize_buffer(width, height)
+                pixels
+                    .resize_buffer(width, height)
                     .expect("Failed to resize buffer");
                 enviornment.resize(width, height);
-            },
+            }
             Event::MainEventsCleared => {
                 enviornment.simulate(1);
                 if let Some((mouse_x, mouse_y)) = controller.pixel_position(&pixels) {
@@ -124,15 +128,16 @@ async fn run() {
                         mouse_y,
                         controller.selection_size(),
                         controller.material,
-                        controller.mouse_clicked(MouseButton::Left)
+                        controller.mouse_clicked(MouseButton::Left),
                     );
-                    #[cfg(debug_assertions)]{
+                    #[cfg(debug_assertions)]
+                    {
                         println!("{:?}", (mouse_x, mouse_y))
                     }
                 }
                 enviornment.render(pixels.get_frame_mut());
                 window.request_redraw();
-            },
+            }
             Event::RedrawRequested(_) => {
                 if let Err(e) = pixels.render() {
                     log::warn!("{e}");

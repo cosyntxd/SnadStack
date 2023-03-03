@@ -1,9 +1,6 @@
-use std::ptr;
-use crate::cells::{
-    Cell,
-    NONE_CELL
-};
+use crate::cells::{Cell, NONE_CELL};
 use crate::world::World;
+use std::ptr;
 
 pub struct CellsAPI<'a> {
     pub x: isize,
@@ -13,7 +10,7 @@ pub struct CellsAPI<'a> {
     pub world: &'a mut World,
 }
 impl<'a> CellsAPI<'a> {
-    pub fn new(world: &'a mut World) -> Self{
+    pub fn new(world: &'a mut World) -> Self {
         Self {
             x: 0,
             y: 0,
@@ -29,7 +26,7 @@ impl<'a> CellsAPI<'a> {
     pub fn current(&mut self) -> &mut Cell {
         &mut self.world.grid[self.y as usize * self.world.width + self.x as usize]
     }
-    pub fn in_bounds(&mut self, x: isize, y: isize) -> bool{
+    pub fn in_bounds(&mut self, x: isize, y: isize) -> bool {
         y < self.height && y >= 0 && x < self.width && x >= 0
     }
     fn offset(&mut self, x: isize, y: isize) -> (isize, isize) {
@@ -37,22 +34,24 @@ impl<'a> CellsAPI<'a> {
     }
     pub fn cell_by_offset(&mut self, x: isize, y: isize) -> &Cell {
         let (target_x, target_y) = self.offset(x, y);
-        if !self.in_bounds(target_x, target_y)  {
+        if !self.in_bounds(target_x, target_y) {
             return &NONE_CELL;
         }
         &mut self.world.grid[target_y as usize * self.world.width + target_x as usize]
     }
-    pub fn swap_offset(&mut self, x: isize, y: isize){
+    pub fn swap_offset(&mut self, x: isize, y: isize) {
         let (target_x, target_y) = self.offset(x, y);
-        if !self.in_bounds(target_x, target_y)  {
-            return
+        if !self.in_bounds(target_x, target_y) {
+            return;
         }
         unsafe {
-            let current: *mut Cell = &mut self.world.grid[self.y as usize * self.world.width + self.x as usize];
-            let target: *mut Cell = &mut self.world.grid[target_y as usize * self.world.width + target_x as usize];
+            let current: *mut Cell =
+                &mut self.world.grid[self.y as usize * self.world.width + self.x as usize];
+            let target: *mut Cell =
+                &mut self.world.grid[target_y as usize * self.world.width + target_x as usize];
             // Stop material being simulated twice in a single frame
-            if (*current).updated == self.world.time{
-                return
+            if (*current).updated == self.world.time {
+                return;
             }
             (*current).updated = self.world.time;
             (*target).updated = self.world.time;
