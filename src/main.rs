@@ -119,9 +119,10 @@ async fn run() {
                     .resize_buffer(width, height)
                     .expect("Failed to resize buffer");
                 enviornment.resize(width, height);
+                enviornment.render(pixels.get_frame_mut());
             }
             Event::MainEventsCleared => {
-                enviornment.simulate(1);
+                enviornment.simulate(1, pixels.get_frame_mut());
                 if let Some((mouse_x, mouse_y)) = controller.pixel_position(&pixels) {
                     enviornment.place_circle(
                         mouse_x,
@@ -129,13 +130,13 @@ async fn run() {
                         controller.selection_size(),
                         controller.material,
                         controller.mouse_clicked(MouseButton::Left),
+                        pixels.get_frame_mut(),
                     );
                     #[cfg(debug_assertions)]
                     {
                         println!("{:?}", (mouse_x, mouse_y))
                     }
                 }
-                enviornment.render(pixels.get_frame_mut());
                 window.request_redraw();
             }
             Event::RedrawRequested(_) => {

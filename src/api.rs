@@ -1,22 +1,23 @@
 use crate::cells::{Cell, NONE_CELL};
 use crate::world::World;
-use std::ptr;
 
 pub struct CellsAPI<'a> {
     pub x: isize,
     pub y: isize,
     pub width: isize,
     pub height: isize,
+    pub pixels: &'a mut [u8],
     pub world: &'a mut World,
 }
 impl<'a> CellsAPI<'a> {
-    pub fn new(world: &'a mut World) -> Self {
+    pub fn new(world: &'a mut World, pixels: &'a mut [u8]) -> Self {
         Self {
             x: 0,
             y: 0,
             width: world.width as isize,
             height: world.height as isize,
             world,
+            pixels,
         }
     }
     pub fn set_position(&mut self, x: usize, y: usize) {
@@ -44,19 +45,22 @@ impl<'a> CellsAPI<'a> {
         if !self.in_bounds(target_x, target_y) {
             return;
         }
-        unsafe {
-            let current: *mut Cell =
-                &mut self.world.grid[self.y as usize * self.world.width + self.x as usize];
-            let target: *mut Cell =
-                &mut self.world.grid[target_y as usize * self.world.width + target_x as usize];
-            // Stop material being simulated twice in a single frame
-            if (*current).updated == self.world.time {
-                return;
-            }
-            (*current).updated = self.world.time;
-            (*target).updated = self.world.time;
-            ptr::swap(current, target);
+        let current_index = self.y as usize * self.world.width + self.x as usize;
+        let target_index = target_y as usize * self.world.width + target_x as usize;
+
+        // Stop material being simulated twice in a single frame
+        if self.world.grid[current_index].updated == self.world.time {
+            return;
         }
+        self.world.grid[current_index].updated = self.world.time;
+        self.world.grid[target_index].updated = self.world.time;
+
+        self.pixels[target_index * 4..target_index * 4 + 3]
+            .copy_from_slice(&self.world.grid[current_index].rgb);
+        self.pixels[current_index * 4..current_index * 4 + 3]
+            .copy_from_slice(&self.world.grid[target_index].rgb);
+
+        self.world.grid.swap(current_index, target_index);
     }
     pub fn advance_time(&mut self) {
         self.world.time = self.world.time.wrapping_add(1)

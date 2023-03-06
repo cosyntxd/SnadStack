@@ -1,4 +1,5 @@
 use crate::{
+    api::CellsAPI,
     cells::{Cell, CellType},
     logic::simulate_steps,
 };
@@ -39,6 +40,7 @@ impl World {
         radius: isize,
         material: CellType,
         place: bool,
+        pixels: &mut [u8],
     ) {
         let diameter = radius * 2;
         for index_y in 0..diameter {
@@ -50,24 +52,30 @@ impl World {
                         (index_x + x as isize - radius).clamp(0, self.width as isize - 1) as usize;
                     let y =
                         (index_y + y as isize - radius).clamp(0, self.height as isize - 1) as usize;
-                    let mut cell = &mut self.grid[y * self.width + x];
+                    let index = y * self.width + x;
+                    let cell = &mut self.grid[index];
                     if place {
                         *cell = Cell::new(material);
+                        pixels[index * 4..index * 4 + 3].copy_from_slice(&cell.rgb)
                     }
-                    cell.selected = true;
+                    // (*cell).selected = true; // New rendering system breaks this
                 }
             }
         }
     }
-    pub fn simulate(&mut self, steps: u8) {
-        simulate_steps(self, steps)
+    pub fn simulate(&mut self, steps: u8, pixels: &mut [u8]) {
+        let mut api = CellsAPI::new(self, pixels);
+        for _ in 0..steps {
+            api.advance_time();
+            simulate_steps(&mut api)
+        }
     }
     pub fn render(&mut self, pixels: &mut [u8]) {
         for y in 0..self.height {
             for x in 0..self.width {
-                let index = x + y * self.width;
+                let index = y * self.width + x;
                 let cell = &mut self.grid[index];
-                let pixel = &mut pixels[4 * index..4 * index + 4];
+                let pixel = &mut pixels[index * 4..index * 4 + 4];
                 pixel[0..3].copy_from_slice(&cell.rgb);
                 pixel[3] = 255 - (cell.selected as u8 * 96);
                 cell.selected = false;
