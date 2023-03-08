@@ -9,7 +9,7 @@ pub struct World {
     pub density: u32,
     pub width: usize,
     pub height: usize,
-    pub time: u8,
+    pub time: u16,
 }
 impl World {
     pub fn new(width: i32, height: i32, density: u32) -> Self {
@@ -67,7 +67,12 @@ impl World {
         let mut api = CellsAPI::new(self, pixels);
         for _ in 0..steps {
             api.advance_time();
-            simulate_steps(&mut api)
+            for y in (0..api.world.height).rev() {
+                for x in 0..api.world.width {
+                    api.set_position(x, y);
+                    simulate_steps(&mut api)
+                }
+            }
         }
     }
     pub fn render(&mut self, pixels: &mut [u8]) {

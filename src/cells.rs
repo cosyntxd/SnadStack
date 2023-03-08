@@ -3,7 +3,7 @@ pub struct Cell {
     pub material: CellType,
     pub rgb: [u8; 3],
     pub selected: bool,
-    pub updated: u8,
+    pub updated: u16,
 }
 impl Default for Cell {
     fn default() -> Self {
