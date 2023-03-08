@@ -25,8 +25,15 @@ impl World {
         }
     }
     pub fn resize(&mut self, width: u32, height: u32) {
-        let grid: Vec<Cell> = vec![Default::default(); (width * height) as usize];
-
+        let mut grid: Vec<Cell> = vec![Default::default(); (width * height) as usize];
+        self.grid
+            .chunks_exact(self.width)
+            .zip(grid.chunks_exact_mut(width as usize))
+            .for_each(|(old, new)| {
+                for (new_element, old_element) in new.iter_mut().zip(old.iter()) {
+                    *new_element = *old_element;
+                }
+            });
         self.width = width as usize;
         self.height = height as usize;
 
