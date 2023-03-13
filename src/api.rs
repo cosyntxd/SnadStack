@@ -1,23 +1,31 @@
 use crate::cells::{Cell, NONE_CELL};
+use crate::logic::simulate_steps;
 use crate::world::World;
+use std::cell::UnsafeCell;
 
-pub struct CellsAPI<'a> {
-    pub x: isize,
-    pub y: isize,
-    pub width: isize,
-    pub height: isize,
+// Each thread gets it's own copy
+// Change shared grid for performance
+pub struct CellsApi<'a> {
     pub pixels: &'a mut [u8],
     pub world: &'a mut World,
+    pub x: isize,
+    pub y: isize,
 }
-impl<'a> CellsAPI<'a> {
-    pub fn new(world: &'a mut World, pixels: &'a mut [u8]) -> Self {
+impl<'a> CellsApi<'a> {
+    pub fn new(shared: &'a mut SharedCellApi<'a>) -> CellsApi<'a> {
         Self {
+            pixels: shared.pixels,
+            world: shared.world,
             x: 0,
             y: 0,
-            width: world.width as isize,
-            height: world.height as isize,
-            world,
-            pixels,
+        }
+    }
+    pub fn simulate(&mut self, x1: isize, x2: isize) {
+        for y in (0..self.world.height).rev() {
+            for x in x1..x2 {
+                self.set_position(x as usize, y as usize);
+                simulate_steps(self)
+            }
         }
     }
     pub fn set_position(&mut self, x: usize, y: usize) {
@@ -28,7 +36,7 @@ impl<'a> CellsAPI<'a> {
         &mut self.world.grid[self.y as usize * self.world.width + self.x as usize]
     }
     pub fn in_bounds(&mut self, x: isize, y: isize) -> bool {
-        y < self.height && y >= 0 && x < self.width && x >= 0
+        y < self.world.height as isize && y >= 0 && x < self.world.width as isize && x >= 0
     }
     fn offset(&mut self, x: isize, y: isize) -> (isize, isize) {
         (self.x + x, self.y - y)
@@ -64,5 +72,34 @@ impl<'a> CellsAPI<'a> {
     }
     pub fn advance_time(&mut self) {
         self.world.time = self.world.time.wrapping_add(1)
+    }
+}
+
+// Shared data between threads
+pub struct SharedCellApi<'a> {
+    pub pixels: &'a mut [u8],
+    pub world: &'a mut World,
+}
+impl<'a> SharedCellApi<'a> {
+    pub fn new(world: &'a mut World, pixels: &'a mut [u8]) -> Self {
+        Self { world, pixels }
+    }
+}
+// Allow for sharing mutable data between threads
+pub struct UnsafeShared<'a> {
+    data: UnsafeCell<SharedCellApi<'a>>,
+}
+
+unsafe impl<'a> Send for UnsafeShared<'a> {}
+unsafe impl<'a> Sync for UnsafeShared<'a> {}
+
+impl<'a> UnsafeShared<'a> {
+    pub const fn new(t: SharedCellApi<'a>) -> UnsafeShared<'a> {
+        UnsafeShared {
+            data: UnsafeCell::new(t),
+        }
+    }
+    pub fn get_api(&self) -> CellsApi<'a> {
+        CellsApi::new(unsafe { &mut *self.data.get() })
     }
 }

@@ -1,8 +1,8 @@
 use crate::{
-    api::CellsAPI,
+    api::{SharedCellApi, UnsafeShared},
     cells::{Cell, CellType},
-    logic::simulate_steps,
 };
+use std::{sync::Arc, thread};
 
 pub struct World {
     pub grid: Vec<Cell>,
@@ -70,18 +70,31 @@ impl World {
             }
         }
     }
-    pub fn simulate(&mut self, steps: u8, pixels: &mut [u8]) {
-        let mut api = CellsAPI::new(self, pixels);
-        for _ in 0..steps {
-            api.advance_time();
-            for y in (0..api.world.height).rev() {
-                for x in 0..api.world.width {
-                    api.set_position(x, y);
-                    simulate_steps(&mut api)
-                }
-            }
-        }
+    pub fn simulate(&mut self, steps: u16, pixels: &mut [u8]) {
+        let arc_api = Arc::new(UnsafeShared::new(SharedCellApi::new(self, pixels)));
+        let arc_0 = Arc::clone(&arc_api);
+
+        let mut api = arc_0.get_api();
+        api.advance_time();
+
+        thread::scope(move |s| {
+            let arc_1 = Arc::clone(&arc_api);
+            let arc_2 = Arc::clone(&arc_api);
+
+            s.spawn(move || {
+                let mut api = arc_1.get_api();
+                let pos = api.world.width as isize / 2;
+                api.simulate(0, pos)
+            });
+
+            s.spawn(move || {
+                let mut api = arc_2.get_api();
+                let pos = api.world.width as isize / 2;
+                api.simulate(pos, api.world.width as isize)
+            });
+        });
     }
+
     pub fn render(&mut self, pixels: &mut [u8]) {
         for y in 0..self.height {
             for x in 0..self.width {

@@ -1,5 +1,5 @@
-use crate::{api::CellsAPI, cells::CellType::*};
-pub fn simulate_steps(api: &mut CellsAPI) {
+use crate::{api::CellsApi, cells::CellType::*};
+pub fn simulate_steps(api: &mut CellsApi) {
     match api.current().material {
         Sand => {
             let x = fastrand::isize(-1..=1);
