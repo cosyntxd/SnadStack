@@ -2,12 +2,14 @@ use crate::cells::{Cell, NONE_CELL};
 use crate::logic::simulate_steps;
 use crate::world::World;
 use std::cell::UnsafeCell;
+use std::sync::Barrier;
 
 // Each thread gets it's own copy
 // Change shared grid for performance
 pub struct CellsApi<'a> {
     pub pixels: &'a mut [u8],
     pub world: &'a mut World,
+    pub barrier: &'a Barrier,
     pub x: isize,
     pub y: isize,
 }
@@ -16,6 +18,7 @@ impl<'a> CellsApi<'a> {
         Self {
             pixels: shared.pixels,
             world: shared.world,
+            barrier: &shared.barrier,
             x: 0,
             y: 0,
         }
@@ -75,14 +78,19 @@ impl<'a> CellsApi<'a> {
     }
 }
 
-// Shared data between threads
+// Shared data between threads, preventing the race condition is up to the job of the programmer
 pub struct SharedCellApi<'a> {
     pub pixels: &'a mut [u8],
     pub world: &'a mut World,
+    pub barrier: Barrier,
 }
 impl<'a> SharedCellApi<'a> {
-    pub fn new(world: &'a mut World, pixels: &'a mut [u8]) -> Self {
-        Self { world, pixels }
+    pub fn new(world: &'a mut World, pixels: &'a mut [u8], threads: usize) -> Self {
+        Self {
+            world,
+            pixels,
+            barrier: Barrier::new(threads),
+        }
     }
 }
 // Allow for sharing mutable data between threads
