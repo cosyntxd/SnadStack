@@ -100,7 +100,7 @@ impl World {
                 for _ in 0..steps {
                     let mut api = arc_1.get_api();
                     api.barrier.wait();
-                    api.simulate(0, right);
+                    api.simulate(0, left);
                 }
             });
             s.spawn(move || {
