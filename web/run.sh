@@ -1,5 +1,8 @@
 #!/bin/sh 
 
+# Script will stop execution on error
+set -e
+
 # Release or debug profile
 if [ $1 = "--release" ]
 then
@@ -14,7 +17,7 @@ fi
 path="target/wasm32-unknown-unknown/${build}/snad_stack.wasm"
 
 # Builds the wasm file for the web
-cargo build --target wasm32-unknown-unknown $profile
+cargo +nightly build --target wasm32-unknown-unknown $profile
 
 # Generates necessary bindings
 wasm-bindgen --out-dir web/ --target web $path

@@ -72,6 +72,17 @@ impl World {
     }
     pub fn simulate(&mut self, steps: u16, pixels: &mut [u8]) {
         let arc_api = Arc::new(UnsafeShared::new(SharedCellApi::new(self, pixels, 3)));
+        // WebAssembly parallelization is slightly difficult, easiest solution is to not use threads
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut api = arc_api.get_api();
+            let width = api.world.width as isize;
+            for _ in 0..steps {
+                api.advance_time();
+                api.simulate(0, width);
+            }
+            return;
+        }
         // Limits race conditions by creating a 10 wide region in the center
         // The area to the left and to the right are both simulated at the same time
         // This buffered area is simulated after they finished
@@ -85,30 +96,29 @@ impl World {
             let width = arc_1.get_api().world.width as isize;
             let left = (width / 3).max(width / 2 - 5);
             let right = (2 * width / 3).max(width / 2 + 5);
-
             s.spawn(move || {
                 for _ in 0..steps {
                     let mut api = arc_1.get_api();
-                    api.simulate(0, width);
                     api.barrier.wait();
+                    api.simulate(0, right);
                 }
             });
             s.spawn(move || {
                 for _ in 0..steps {
-                    // Notice how it is waiting on the barrier before it simulates the region
-                    // While other threads will wait on the barrier after simulating their region
+                    // Notice how it is waiting on the barrier after it simulates the region
+                    // While other threads will wait on the barrier before simulating their region
                     // This guarantees that no other threads will be be modifying the grid when it is simulating
                     let mut api = arc_2.get_api();
                     api.advance_time();
-                    api.barrier.wait();
                     api.simulate(left, right);
+                    api.barrier.wait();
                 }
             });
             s.spawn(move || {
                 for _ in 0..steps {
                     let mut api = arc_3.get_api();
-                    api.simulate(right, width);
                     api.barrier.wait();
+                    api.simulate(right, width);
                 }
             });
         });
