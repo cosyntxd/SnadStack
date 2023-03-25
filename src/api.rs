@@ -1,4 +1,4 @@
-use crate::cells::{Cell, NONE_CELL};
+use crate::cells::{Cell, CellType};
 use crate::logic::simulate_steps;
 use crate::world::World;
 use std::cell::UnsafeCell;
@@ -10,6 +10,7 @@ pub struct CellsApi<'a> {
     pub pixels: &'a mut [u8],
     pub world: &'a mut World,
     pub barrier: &'a Barrier,
+    pub none_cell: Cell,
     pub x: isize,
     pub y: isize,
 }
@@ -19,6 +20,7 @@ impl<'a> CellsApi<'a> {
             pixels: shared.pixels,
             world: shared.world,
             barrier: &shared.barrier,
+            none_cell: Cell::new(CellType::None),
             x: 0,
             y: 0,
         }
@@ -44,10 +46,11 @@ impl<'a> CellsApi<'a> {
     fn offset(&mut self, x: isize, y: isize) -> (isize, isize) {
         (self.x + x, self.y - y)
     }
-    pub fn cell_by_offset(&mut self, x: isize, y: isize) -> &Cell {
+    pub fn cell_by_offset(&mut self, x: isize, y: isize) -> &mut Cell {
         let (target_x, target_y) = self.offset(x, y);
         if !self.in_bounds(target_x, target_y) {
-            return &NONE_CELL;
+            self.none_cell = Cell::new(CellType::None);
+            return &mut self.none_cell;
         }
         &mut self.world.grid[target_y as usize * self.world.width + target_x as usize]
     }

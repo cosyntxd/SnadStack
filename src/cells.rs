@@ -16,13 +16,6 @@ impl Default for Cell {
     }
 }
 
-pub const NONE_CELL: Cell = Cell {
-    material: CellType::None,
-    rgb: [0, 0, 0],
-    selected: false,
-    updated: 0,
-};
-
 impl Cell {
     pub fn new(material: CellType) -> Self {
         let rgb = Self::rgb_ranges(material);
