@@ -1,6 +1,9 @@
+use bresenham::Bresenham;
+
 use crate::{
     api::{SharedCellApi, UnsafeShared},
     cells::{Cell, CellType},
+    shapes,
 };
 use std::{sync::Arc, thread};
 
@@ -42,32 +45,77 @@ impl World {
 
     pub fn place_circle(
         &mut self,
-        x: usize,
-        y: usize,
+        x1: u32,
+        y1: u32,
+        x2: u32,
+        y2: u32,
         radius: isize,
         material: CellType,
         place: bool,
         pixels: &mut [u8],
     ) {
+        let in_cache = x1.abs_diff(x2).max(y1.abs_diff(y2)) < 7;
+
         let diameter = radius * 2;
         for index_y in 0..diameter {
             for index_x in 0..diameter {
                 let distance_squared = (index_x - radius).pow(2) + (index_y - radius).pow(2);
                 let in_circle = distance_squared < radius.pow(2);
-                if in_circle {
-                    let x =
-                        (index_x + x as isize - radius).clamp(0, self.width as isize - 1) as usize;
-                    let y =
-                        (index_y + y as isize - radius).clamp(0, self.height as isize - 1) as usize;
-                    let index = y * self.width + x;
-                    let cell = &mut self.grid[index];
-                    if place {
-                        *cell = Cell::new(material);
-                        pixels[index * 4..index * 4 + 3].copy_from_slice(&cell.rgb)
+                if !in_circle {
+                    continue;
+                }
+                if in_cache {
+                    let line = shapes::line(
+                        (x2 as isize - x1 as isize) + 7,
+                        (y2 as isize - y1 as isize) + 7,
+                    );
+                    for i in line.chunks_exact(2) {
+                        self.set_coord_material(
+                            i[0] + index_x - radius + x1 as isize,
+                            i[1] + index_y - radius + y1 as isize,
+                            radius,
+                            pixels,
+                            material,
+                            place,
+                        )
                     }
-                    // (*cell).selected = true; // New rendering system breaks this
+                } else {
+                    let mut line: Vec<(isize, isize)> = bresenham::Bresenham::new(
+                        (
+                            index_x - radius + x1 as isize,
+                            index_y - radius + y1 as isize,
+                        ),
+                        (
+                            index_x - radius + x2 as isize,
+                            index_y - radius + y2 as isize,
+                        ),
+                    )
+                    .collect();
+                    line.push((x2 as isize, y2 as isize));
+                    for i in line {
+                        self.set_coord_material(i.0, i.1, radius, pixels, material, place)
+                    }
                 }
             }
+        }
+    }
+    fn set_coord_material(
+        &mut self,
+        x: isize,
+        y: isize,
+        radius: isize,
+        pixels: &mut [u8],
+        material: CellType,
+        place: bool,
+    ) {
+        let x = (x).clamp(0, self.width as isize - 1) as usize;
+        let y = (y).clamp(0, self.height as isize - 1) as usize;
+        let index = y * self.width + x;
+        let cell = &mut self.grid[index];
+        if place {
+            *cell = Cell::new(material);
+            pixels[index * 4..index * 4 + 3].copy_from_slice(&cell.rgb)
+            // (*cell).selected = true; // New rendering system breaks this
         }
     }
     pub fn simulate(&mut self, steps: u16, pixels: &mut [u8]) {

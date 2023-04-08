@@ -4,4 +4,5 @@ pub mod api;
 pub mod cells;
 pub mod input;
 pub mod logic;
+pub mod shapes;
 pub mod world;

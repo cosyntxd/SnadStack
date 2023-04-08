@@ -123,19 +123,17 @@ async fn run() {
             }
             Event::MainEventsCleared => {
                 enviornment.simulate(1, pixels.get_frame_mut());
-                if let Some((mouse_x, mouse_y)) = controller.pixel_position(&pixels) {
+                if let Some((current, previous)) = controller.pixel_position(&enviornment) {
                     enviornment.place_circle(
-                        mouse_x,
-                        mouse_y,
+                        current.x,
+                        current.y,
+                        previous.x,
+                        previous.y,
                         controller.selection_size(),
                         controller.material,
                         controller.mouse_clicked(MouseButton::Left),
                         pixels.get_frame_mut(),
                     );
-                    #[cfg(debug_assertions)]
-                    {
-                        println!("{:?}", (mouse_x, mouse_y))
-                    }
                 }
                 window.request_redraw();
             }

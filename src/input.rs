@@ -1,5 +1,5 @@
-use crate::cells::CellType;
-use pixels::Pixels;
+use crate::{cells::CellType, world::World};
+
 use winit::{
     dpi::PhysicalPosition,
     event::{ElementState, Event, MouseButton, MouseScrollDelta, VirtualKeyCode, WindowEvent},
@@ -8,7 +8,8 @@ use winit::{
 // A Useful abstraction for winit event_loop events
 pub struct InputHelper {
     mouse_states: [bool; 3],
-    pub current_mouse: PhysicalPosition<f32>,
+    pub previous: Option<PhysicalPosition<f32>>,
+    pub current_mouse: Option<PhysicalPosition<f32>>,
     selection_size: f32,
     pub material: CellType,
 }
@@ -16,7 +17,8 @@ impl InputHelper {
     pub fn new() -> Self {
         Self {
             mouse_states: [false; 3],
-            current_mouse: PhysicalPosition::new(-1.0, -1.0),
+            previous: None,
+            current_mouse: None,
             selection_size: 8.0,
             material: CellType::Sand,
         }
@@ -43,7 +45,7 @@ impl InputHelper {
                     self.mouse_states[index] = button_state;
                 }
                 WindowEvent::CursorMoved { position, .. } => {
-                    self.current_mouse = position.cast();
+                    self.current_mouse = Some(position.cast());
                 }
                 WindowEvent::MouseWheel { delta, .. } => {
                     // Touchpad/trackpad
@@ -58,6 +60,10 @@ impl InputHelper {
                 }
                 _ => {}
             }
+        }
+        if let Event::RedrawRequested(_) = events {
+            // Calculating here because many mouse move events may be sent in a single frame
+            self.previous = self.current_mouse;
         }
     }
     fn mouse_button_to_int(button: &MouseButton) -> usize {
@@ -75,10 +81,27 @@ impl InputHelper {
     pub fn selection_size(&mut self) -> isize {
         self.selection_size as isize
     }
-    // An easy way to get cell coordinates (usize) from mouse position (f32)
-    pub fn pixel_position(&mut self, pixels: &Pixels) -> Option<(usize, usize)> {
-        pixels
-            .window_pos_to_pixel((self.current_mouse.x, self.current_mouse.y))
-            .ok()
+    fn convert_position(position: PhysicalPosition<f32>, d: u32) -> PhysicalPosition<u32> {
+        let position = position.cast::<u32>();
+        PhysicalPosition::new(position.x / d, position.y / d)
+    }
+    // An easy way to get cell coordinates (u32) from mouse position (f32)
+    pub fn pixel_position(
+        &mut self,
+        world: &World,
+    ) -> Option<(PhysicalPosition<u32>, PhysicalPosition<u32>)> {
+        let density = world.density;
+        match (self.current_mouse, self.previous) {
+            (Some(current), Some(previous)) => {
+                let current = Self::convert_position(current, density);
+                let previous = Self::convert_position(previous, density);
+                Some((current, previous))
+            }
+            (Some(current), None) => {
+                let current = Self::convert_position(current, density);
+                Some((current, current))
+            }
+            _ => None,
+        }
     }
 }
