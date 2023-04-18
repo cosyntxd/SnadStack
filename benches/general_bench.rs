@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 use fastrand::Rng;
-use snad_stack::{cells::CellType, shapes, world::World};
+use snad_stack::{cells::CellType, world::World};
 
 fn general_bench(c: &mut Criterion) {
     const WIDTH: u32 = 1600;
@@ -53,18 +53,18 @@ fn general_bench(c: &mut Criterion) {
             || {
                 let mut w = World::new(WIDTH as i32, HEIGHT as i32, 1);
                 let p = &mut pixels.clone();
-                black_box((w, pixels.clone()))
-            },
-            |(world, pixels)| {
                 let x = rand_range(WIDTH);
                 let y = rand_range(HEIGHT);
 
+                black_box((w, pixels.clone(), x, y))
+            },
+            |(world, pixels, x, y)| {
                 world.place_circle(
-                    x,
-                    y,
-                    x + 5,
-                    y + 6,
-                    128,
+                    *x,
+                    *y,
+                    *x + 32,
+                    *y + 64,
+                    32,
                     choices[rand_range(choices.len() as u32) as usize],
                     true,
                     pixels,
@@ -73,17 +73,8 @@ fn general_bench(c: &mut Criterion) {
             BatchSize::SmallInput,
         )
     });
-    group.bench_function("Lines", |b| {
-        b.iter_batched_ref(
-            || {},
-            |_| black_box(shapes::line(6, 8)),
-            // shapes::bresenham_line(4, 3)
-            BatchSize::SmallInput,
-        )
-    });
 }
 
 criterion_group!(benches, general_bench);
 
 criterion_main!(benches);
-// 70 -> 9 -> 2 ns
