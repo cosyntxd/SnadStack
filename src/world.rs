@@ -52,7 +52,8 @@ impl World {
         pixels: &mut [u8],
     ) {
         let line =
-            bresenham::Bresenham::new((x2 as isize, y2 as isize), (x1 as isize, y1 as isize))
+            bresenham::Bresenham::new((x1 as isize, y1 as isize), (x2 as isize, y2 as isize))
+                .chain(std::iter::once((x2 as isize, y2 as isize))) // Manually add endpoint
                 .collect::<Vec<(isize, isize)>>();
         let diameter = radius * 2;
         for index_y in 0..diameter {

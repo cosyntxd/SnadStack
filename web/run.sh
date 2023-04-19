@@ -4,7 +4,7 @@
 set -e
 
 # Release or debug profile
-if [ $1 = "--release" ]
+if [ "$1:-" = "--release" ]
 then
     build="web-release";
     profile="--profile web-release";
@@ -13,11 +13,11 @@ else
     profile="";
 fi
 
-# Wasm file location
-path="target/wasm32-unknown-unknown/${build}/snad_stack.wasm"
+# Wasm file location relative to file location
+path="$(dirname "$0")/../target/wasm32-unknown-unknown/${build}/snad_stack.wasm"
 
 # Builds the wasm file for the web
-cargo +nightly build --target wasm32-unknown-unknown $profile
+cargo build --target wasm32-unknown-unknown $profile
 
 # Generates necessary bindings
 wasm-bindgen --out-dir web/ --target web $path
