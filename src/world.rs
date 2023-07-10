@@ -55,26 +55,58 @@ impl World {
             bresenham::Bresenham::new((x1 as isize, y1 as isize), (x2 as isize, y2 as isize))
                 .chain(std::iter::once((x2 as isize, y2 as isize))) // Manually add endpoint
                 .collect::<Vec<(isize, isize)>>();
+
         let diameter = radius * 2;
         for index_y in 0..diameter {
             for index_x in 0..diameter {
                 let distance_squared = (index_x - radius).pow(2) + (index_y - radius).pow(2);
-                let in_circle = distance_squared < radius.pow(2);
-                if !in_circle {
+
+                if distance_squared >= radius.pow(2) {
                     continue;
                 }
-                for point in &line {
-                    let x = (point.0 + index_x - radius).clamp(0, self.width as isize - 1) as usize;
-                    let y =
-                        (point.1 + index_y - radius).clamp(0, self.height as isize - 1) as usize;
-                    let index = y * self.width + x;
-                    let cell = &mut self.grid[index];
-                    if place {
-                        *cell = Cell::new(material);
-                        pixels[index * 4..index * 4 + 3].copy_from_slice(&cell.rgb)
+
+                let x_correct = (x1 as isize - x2 as isize).signum() == (index_x - radius).signum();
+                let y_correct = (y1 as isize - y2 as isize).signum() == (index_y - radius).signum();
+
+                let corner = y_correct || x_correct || radius == 1;
+                let edge = distance_squared >= radius.pow(2) - 3 * radius + 2;
+                if edge && corner {
+                    for point in &line {
+                        let x = (point.0 as isize + index_x - radius)
+                            .clamp(0, self.width as isize - 1)
+                            as usize;
+
+                        let y = (point.1 as isize + index_y - radius)
+                            .clamp(0, self.height as isize - 1)
+                            as usize;
+
+                        self.place_tile(x, y, material, pixels, place)
                     }
+                } else {
+                    let x =
+                        (x2 as isize + index_x - radius).clamp(0, self.width as isize - 1) as usize;
+                    let y = (y2 as isize + index_y - radius).clamp(0, self.height as isize - 1)
+                        as usize;
+
+                    self.place_tile(x, y, material, pixels, place)
                 }
             }
+        }
+    }
+    fn place_tile(
+        &mut self,
+        x: usize,
+        y: usize,
+        material: CellType,
+        pixels: &mut [u8],
+        place: bool,
+    ) {
+        let index = y * self.width + x;
+        let cell = &mut self.grid[index];
+
+        if place {
+            *cell = Cell::new(material);
+            pixels[index * 4..index * 4 + 3].copy_from_slice(&cell.rgb)
         }
     }
 

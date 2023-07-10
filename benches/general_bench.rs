@@ -48,7 +48,7 @@ fn general_bench(c: &mut Criterion) {
         )
     });
 
-    group.bench_function("Circles", |b| {
+    group.bench_function("Placing", |b| {
         b.iter_batched_ref(
             || {
                 let mut w = World::new(WIDTH as i32, HEIGHT as i32, 1);
@@ -62,9 +62,9 @@ fn general_bench(c: &mut Criterion) {
                 world.place_circle(
                     *x,
                     *y,
-                    *x + 32,
-                    *y + 64,
-                    32,
+                    (*x as i32 + fastrand::i32(-64..64).max(0)) as u32,
+                    (*y as i32 + fastrand::i32(-64..64).max(0)) as u32,
+                    64,
                     choices[rand_range(choices.len() as u32) as usize],
                     true,
                     pixels,
