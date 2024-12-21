@@ -1,6 +1,6 @@
 use pixels::{PixelsBuilder, SurfaceTexture};
 use snad_stack::{input::InputHelper, world::World};
-use std::rc::Rc;
+use std::{rc::Rc, time::Duration};
 use winit::{
     dpi::LogicalSize,
     event::{Event, MouseButton, WindowEvent},
@@ -24,20 +24,21 @@ fn main() {
 
 async fn run() {
     // The cellular automata grid
-    let cell_count = LogicalSize::new(200, 100);
-    let mut enviornment = World::new(cell_count.width, cell_count.height, 16);
-
+    let cell_count = LogicalSize::new(600, 400);
+    let mut enviornment = World::new(cell_count.width, cell_count.height, 9);
     // Event handlers
     let event_loop = EventLoop::new();
-    let mut controller = InputHelper::new();
 
     // Window
     let window = WindowBuilder::new()
         .with_title("Snad Stack")
         .with_inner_size(cell_count)
-        .with_min_inner_size(LogicalSize::new(150, 75))
+        .with_min_inner_size(cell_count)
         .build(&event_loop)
         .expect("Could not instantiate window");
+
+    let mut controller = InputHelper::new(enviornment.density, &window);
+
     let window = Rc::new(window);
 
     #[cfg(target_arch = "wasm32")]
@@ -62,7 +63,7 @@ async fn run() {
         let get_element_size = || {
             let client_window = web_sys::window().unwrap();
             LogicalSize::new(
-                client_window.inner_width().unwrap().as_f64().unwrap(),
+                client_window.inner_width().unwrap().as_f64().unwrap() - 256.0,
                 client_window.inner_height().unwrap().as_f64().unwrap(),
             )
         };
@@ -94,9 +95,13 @@ async fn run() {
         .await
         .expect("Could not instantiate Pixels")
     };
+    enviornment.render(pixels.frame_mut());
 
     // Run Every frame
     event_loop.run(move |event, _, control_flow| {
+        // println!("{event:?}");
+        enviornment.render(pixels.frame_mut());
+
         control_flow.set_poll();
         controller.hook_events(&event);
         match event {
@@ -118,20 +123,31 @@ async fn run() {
                 pixels
                     .resize_buffer(width, height)
                     .expect("Failed to resize buffer");
-                enviornment.resize(width, height);
+                let (resize, expand) = controller.resized();
+                if let Some(e) = expand {
+                    println!("{width:?} {height:?}");
+                    enviornment.resize(
+                        (resize.width as u32 / enviornment.density) as usize,
+                        (resize.height as u32 / enviornment.density) as usize,
+                        e,
+                    );
+                }
                 enviornment.render(pixels.frame_mut());
             }
             Event::MainEventsCleared => {
-                enviornment.simulate(1, pixels.frame_mut());
+                for i in 0..3 {
+                    enviornment.simulate(3, pixels.frame_mut());
+                }
                 if let Some((current, previous)) = controller.pixel_position(&enviornment) {
-                    enviornment.place_circle(
-                        current.x,
-                        current.y,
-                        previous.x,
-                        previous.y,
+                    enviornment.draw_thick_line(
+                        current.x as i32,
+                        current.y as i32,
+                        previous.x as i32,
+                        previous.y as i32,
                         controller.selection_size(),
                         controller.material,
                         controller.mouse_clicked(MouseButton::Left),
+                        true,
                         pixels.frame_mut(),
                     );
                 }
@@ -141,6 +157,18 @@ async fn run() {
                 if let Err(e) = pixels.render() {
                     log::warn!("{e}");
                     control_flow.set_exit();
+                } else if let Some((current, previous)) = controller.pixel_position(&enviornment) {
+                    enviornment.draw_thick_line(
+                        current.x,
+                        current.y,
+                        previous.x,
+                        previous.y,
+                        controller.selection_size(),
+                        controller.material,
+                        false,
+                        false,
+                        pixels.frame_mut(),
+                    );
                 }
             }
             _ => {}

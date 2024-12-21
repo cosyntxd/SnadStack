@@ -1,21 +1,26 @@
 use crate::{
-    api::{SharedCellApi, UnsafeShared},
+    api::{CellsApi, SharedCellApi, UnsafeShared},
     cells::{Cell, CellType},
+    input::CenterLocation,
 };
-use std::{sync::Arc, thread};
+use std::{
+    ops::{Index, IndexMut},
+    sync::Arc,
+    thread,
+};
 
 pub struct World {
     pub grid: Vec<Cell>,
     pub density: u32,
     pub width: usize,
     pub height: usize,
-    pub time: u16,
+    pub time: u8,
 }
 impl World {
     pub fn new(width: i32, height: i32, density: u32) -> Self {
         let height = (height as usize) / density as usize;
         let width = (width as usize) / density as usize;
-        let grid = vec![Default::default(); width * height];
+        let grid = vec![Cell::new(CellType::Air); width * height];
         Self {
             grid,
             density,
@@ -24,31 +29,32 @@ impl World {
             time: 0,
         }
     }
-    pub fn resize(&mut self, width: u32, height: u32) {
-        let mut grid: Vec<Cell> = vec![Default::default(); (width * height) as usize];
+    pub fn resize(&mut self, width: usize, height: usize, offsets: CenterLocation) {
+        let mut new_grid = vec![Cell::new(CellType::Air); (width * height) as usize];
+        // TODO: smarter resize
         self.grid
             .chunks_exact(self.width)
-            .zip(grid.chunks_exact_mut(width as usize))
+            .zip(new_grid.chunks_exact_mut(width as usize))
             .for_each(|(old, new)| {
                 for (new_element, old_element) in new.iter_mut().zip(old.iter()) {
                     *new_element = *old_element;
                 }
             });
-        self.width = width as usize;
-        self.height = height as usize;
-
-        self.grid = grid;
+        self.grid = new_grid;
+        self.width = width;
+        self.height = height;
     }
 
-    pub fn place_circle(
+    pub fn draw_thick_line(
         &mut self,
-        x1: u32,
-        y1: u32,
-        x2: u32,
-        y2: u32,
+        x1: i32,
+        y1: i32,
+        x2: i32,
+        y2: i32,
         radius: isize,
         material: CellType,
         place: bool,
+        hover: bool,
         pixels: &mut [u8],
     ) {
         let line =
@@ -59,18 +65,17 @@ impl World {
         let diameter = radius * 2;
         for index_y in 0..diameter {
             for index_x in 0..diameter {
-                let distance_squared = (index_x - radius).pow(2) + (index_y - radius).pow(2);
+                let distance_non_sqrt = (index_x - radius).pow(2) + (index_y - radius).pow(2);
 
-                if distance_squared >= radius.pow(2) {
+                if distance_non_sqrt >= radius.pow(2) {
                     continue;
                 }
+                let math = ((x2 - x1) as i32) * (index_x - radius) as i32
+                    + ((y2 - y1) as i32 * (index_y - radius) as i32)
+                    < 0;
+                let corner = math || radius == 1;
 
-                let x_correct = (x1 as isize - x2 as isize).signum() == (index_x - radius).signum();
-                let y_correct = (y1 as isize - y2 as isize).signum() == (index_y - radius).signum();
-
-                let corner = y_correct || x_correct || radius == 1;
-                let edge = distance_squared >= radius.pow(2) - 3 * radius + 2;
-                if edge && corner {
+                if (distance_non_sqrt as f64).sqrt() + 1.5 >= radius as f64 && corner {
                     for point in &line {
                         let x = (point.0 as isize + index_x - radius)
                             .clamp(0, self.width as isize - 1)
@@ -80,7 +85,7 @@ impl World {
                             .clamp(0, self.height as isize - 1)
                             as usize;
 
-                        self.place_tile(x, y, material, pixels, place)
+                        self.place_tile(x, y, material, pixels, hover, place)
                     }
                 } else {
                     let x =
@@ -88,7 +93,7 @@ impl World {
                     let y = (y2 as isize + index_y - radius).clamp(0, self.height as isize - 1)
                         as usize;
 
-                    self.place_tile(x, y, material, pixels, place)
+                    self.place_tile(x, y, material, pixels, hover, place)
                 }
             }
         }
@@ -99,80 +104,114 @@ impl World {
         y: usize,
         material: CellType,
         pixels: &mut [u8],
+        hover: bool,
         place: bool,
     ) {
         let index = y * self.width + x;
-        let cell = &mut self.grid[index];
-
-        if place {
-            *cell = Cell::new(material);
-            pixels[index * 4..index * 4 + 3].copy_from_slice(&cell.rgb)
+        let cell = &mut self[index];
+        unsafe {
+            if place {
+                *cell = Cell::new(material);
+                pixels
+                    .get_unchecked_mut(index * 4..index * 4 + 3)
+                    .copy_from_slice(&cell.rgb);
+            }
+            if hover {
+                pixels[index * 4 + 3] = 200;
+            } else {
+                pixels[index * 4 + 3] = 255;
+            }
         }
     }
-
     pub fn simulate(&mut self, steps: u16, pixels: &mut [u8]) {
-        let arc_api = Arc::new(UnsafeShared::new(SharedCellApi::new(self, pixels, 3)));
-        // WebAssembly parallelization is slightly difficult, easiest solution is to not use threads
-        #[cfg(target_arch = "wasm32")]
-        {
-            let mut api = arc_api.get_api();
-            let width = api.world.width as isize;
+        let width = self.width; // Will complain about use after borrow without this
+        let left_edge_random = fastrand::usize(0..width / 16 + 1);
+        let chunk_width = width as usize / 6;
+        let parallelize_chunks = (left_edge_random..width).step_by(chunk_width);
+        let arc_api = Arc::new(UnsafeShared::new(SharedCellApi::new(
+            self,
+            pixels,
+            parallelize_chunks.len(),
+        )));
+        // At low sizes, the overhead of managing multiple threads becomes too large.
+        // Also, wasm threads are weird, so I prefer to not deal with them
+        if width < 100 || cfg!(target_arch = "wasm32") {
             for _ in 0..steps {
+                let mut api = CellsApi::new(arc_api.get_api());
                 api.advance_time();
                 api.simulate(0, width);
             }
-            return;
+        } else {
+            // Main thread, in charge of advancing the time
+            let arc_api = Arc::clone(&arc_api);
+            thread::scope(|s| {
+                s.spawn(|| {
+                    for _ in 0..steps {
+                        let mut api = CellsApi::new(arc_api.get_api());
+                        api.advance_time();
+                        api.wait_start();
+                        api.simulate(0, left_edge_random);
+                        api.sync_threads();
+                    }
+                });
+                for chunk_start in parallelize_chunks {
+                    let chunk_end = (chunk_start + chunk_width).min(width);
+                    let is_rightmost = chunk_end == width;
+                    let arc_api = Arc::clone(&arc_api);
+                    s.spawn(move || {
+                        for _ in 0..steps {
+                            let mut api = CellsApi::new(arc_api.get_api());
+                            api.wait_start();
+                            if is_rightmost {
+                                api.simulate(chunk_end - 10, chunk_end);
+                                api.sync_threads();
+                                api.simulate(chunk_start, chunk_end - 10);
+                            } else {
+                                api.sync_threads();
+                                api.simulate(chunk_start, chunk_end);
+                            }
+                        }
+                    });
+                }
+            });
         }
-        // Limits race conditions by creating a 10 wide region in the center
-        // The area to the left and to the right are both simulated at the same time
-        // This buffered area is simulated after they finished
-        // This way the two threads won't try to change the same cell because of the wide buffer area
-        thread::scope(move |s| {
-            let arc_1 = Arc::clone(&arc_api);
-            let arc_2 = Arc::clone(&arc_api);
-            let arc_3 = Arc::clone(&arc_api);
-
-            // Defines the buffer area in the center
-            let width = arc_1.get_api().world.width as isize;
-            let left = (width / 3).max(width / 2 - 5);
-            let right = (2 * width / 3).max(width / 2 + 5);
-            s.spawn(move || {
-                for _ in 0..steps {
-                    let mut api = arc_1.get_api();
-                    api.barrier.wait();
-                    api.simulate(0, left);
-                }
-            });
-            s.spawn(move || {
-                for _ in 0..steps {
-                    // Notice how it is waiting on the barrier after it simulates the region
-                    // While other threads will wait on the barrier before simulating their region
-                    // This guarantees that no other threads will be be modifying the grid when it is simulating
-                    let mut api = arc_2.get_api();
-                    api.advance_time();
-                    api.simulate(left, right);
-                    api.barrier.wait();
-                }
-            });
-            s.spawn(move || {
-                for _ in 0..steps {
-                    let mut api = arc_3.get_api();
-                    api.barrier.wait();
-                    api.simulate(right, width);
-                }
-            });
-        });
     }
     pub fn render(&mut self, pixels: &mut [u8]) {
         for y in 0..self.height {
             for x in 0..self.width {
                 let index = y * self.width + x;
-                let cell = &mut self.grid[index];
+                let cell = &mut self[index];
                 let pixel = &mut pixels[index * 4..index * 4 + 4];
                 pixel[0..3].copy_from_slice(&cell.rgb);
-                pixel[3] = 255 - (cell.selected as u8 * 96);
-                cell.selected = false;
+                pixel[3] = 255;
             }
         }
+    }
+}
+impl Index<(usize, usize)> for World {
+    type Output = Cell;
+    fn index(&self, index: (usize, usize)) -> &Self::Output {
+        let (y, x) = index;
+        unsafe { self.grid.get_unchecked(y * self.width + x) }
+    }
+}
+
+impl IndexMut<(usize, usize)> for World {
+    fn index_mut(&mut self, index: (usize, usize)) -> &mut Self::Output {
+        let (y, x) = index;
+        unsafe { self.grid.get_unchecked_mut(y * self.width + x) }
+    }
+}
+// Many places use a single index for lookups for better readability
+// Much less confusing when multiple locations are invovled
+impl Index<usize> for World {
+    type Output = Cell;
+    fn index(&self, index: usize) -> &Self::Output {
+        unsafe { self.grid.get_unchecked(index) }
+    }
+}
+impl IndexMut<usize> for World {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        unsafe { self.grid.get_unchecked_mut(index) }
     }
 }
