@@ -135,7 +135,7 @@ async fn run() {
                 enviornment.render(pixels.frame_mut());
             }
             Event::MainEventsCleared => {
-                for i in 0..3 {
+                for i in 0..1 {
                     enviornment.simulate(3, pixels.frame_mut());
                 }
                 if let Some((current, previous)) = controller.pixel_position(&enviornment) {
@@ -153,11 +153,26 @@ async fn run() {
                 }
                 window.request_redraw();
             }
+
             Event::RedrawRequested(_) => {
+                if let Some((current, previous)) = controller.pixel_position(&enviornment) {
+                    enviornment.draw_thick_line(
+                        current.x,
+                        current.y,
+                        previous.x,
+                        previous.y,
+                        controller.selection_size(),
+                        controller.material,
+                        false,
+                        true,
+                        pixels.frame_mut(),
+                    );
+                }
                 if let Err(e) = pixels.render() {
                     log::warn!("{e}");
                     control_flow.set_exit();
-                } else if let Some((current, previous)) = controller.pixel_position(&enviornment) {
+                }
+                if let Some((current, previous)) = controller.pixel_position(&enviornment) {
                     enviornment.draw_thick_line(
                         current.x,
                         current.y,
@@ -175,3 +190,4 @@ async fn run() {
         }
     });
 }
+//

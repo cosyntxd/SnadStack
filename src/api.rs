@@ -119,6 +119,8 @@ impl<'a> CellsApi<'a> {
 
         //     std::ptr::swap_nonoverlapping(ptr_index, ptr_target, 3);
         // }
+        // Somehow there are visual artifacts. Maybe race conditions?
+
         self.pixels[target_index * 4..target_index * 4 + 3]
             .copy_from_slice(&self.world.grid[current_index].rgb);
         self.pixels[current_index * 4..current_index * 4 + 3]
@@ -147,8 +149,8 @@ impl<'a> SharedCellApi<'a> {
         }
     }
 }
-// Allow for sharing mutable data between threads
 
+// Allow for sharing mutable data between threads
 pub struct UnsafeShared<'a, T> {
     data: UnsafeCell<T>,
     _marker: std::marker::PhantomData<&'a T>,

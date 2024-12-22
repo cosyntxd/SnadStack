@@ -163,9 +163,9 @@ impl World {
                             let mut api = CellsApi::new(arc_api.get_api());
                             api.wait_start();
                             if is_rightmost {
-                                api.simulate(chunk_end - 10, chunk_end);
+                                api.simulate(chunk_end - 15, chunk_end);
                                 api.sync_threads();
-                                api.simulate(chunk_start, chunk_end - 10);
+                                api.simulate(chunk_start, chunk_end - 15);
                             } else {
                                 api.sync_threads();
                                 api.simulate(chunk_start, chunk_end);

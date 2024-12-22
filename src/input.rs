@@ -141,6 +141,7 @@ impl InputHelper {
             _ => None,
         }
     }
+
     pub fn resized(&mut self) -> (PhysicalSize<u32>, Option<CenterLocation>) {
         let diff = self.curr_center.difference(self.prev_center);
         let diff = if diff == CenterLocation::default() {
