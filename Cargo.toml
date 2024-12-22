@@ -26,16 +26,20 @@ web-sys = "0.3"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster = "0.2"
 
-[profile.release]
+[profile.optimized]
+inherits = "release"
 lto = true
 strip = true
 panic = "abort"
 opt-level = 3
 
 [profile.web-release]
-inherits = "release"
+inherits = "optimized"
 # https://github.com/rust-lang/rust/issues/93294
 strip = false
+
+[profile.bench]
+inherits = "optimized"
 
 [[bench]]
 name = "general_bench"
