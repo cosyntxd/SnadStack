@@ -1,11 +1,9 @@
 use crate::{
     api::CellsApi,
-    cells::{
-        Cell,
-        CellType::{self, *},
-    },
+    cells::CellType::{self, *},
 };
 pub fn simulate_steps(api: &mut CellsApi) {
+    for i in 0..2 {}
     match api.current().material {
         Sand => {
             let x = fastrand::isize(-1..=1);
@@ -21,13 +19,13 @@ pub fn simulate_steps(api: &mut CellsApi) {
         }
         Water => {
             let x = fastrand::isize(-5..=5);
-            if api.cell_by_offset(0, -1).material == Air
+            if matches!(api.cell_by_offset(0, -1).material, Air | Gas)
                 || (api.cell_by_offset(0, -1).material == Oil && fastrand::bool())
             {
                 api.swap_offset(0, -1)
-            } else if matches!(api.cell_by_offset(x, -1).material, Air | Oil | Gas) {
+            } else if matches!(api.cell_by_offset(x, -1).material, Air | Oil | Gas | Fire) {
                 api.swap_offset(x, -1);
-            } else if matches!(api.cell_by_offset(x, 0).material, Air | Oil | Gas) {
+            } else if matches!(api.cell_by_offset(x, 0).material, Air | Oil | Gas | Fire) {
                 api.swap_offset(x, 0);
             }
         }
@@ -116,6 +114,31 @@ pub fn simulate_steps(api: &mut CellsApi) {
                 }
                 if target.material == Fire {
                     api.set_cell(0, 0, Air)
+                }
+            }
+        }
+        Lava => {
+            let mut c = api.current();
+            let x = fastrand::isize(-4..=4);
+            if api.cell_by_offset(0, -1).material == Air {
+                api.swap_offset(0, -1)
+            } else if matches!(api.cell_by_offset(x, -1).material, Air) {
+                api.swap_offset(x, -1);
+            } else if matches!(api.cell_by_offset(x, 0).material, Air) {
+                api.swap_offset(x, 0);
+            }
+            for y in -1..=1 {
+                for x in -1..=1 {
+                    match api.cell_by_offset(x as isize, y as isize).material {
+                        Water => api.set_cell(x, y, Stone),
+                        _ => {}
+                    }
+                }
+            }
+            if api.cell_by_offset(0, 1).material == Air {
+                if fastrand::usize(0..16) == 0 {
+                    api.set_cell(0, 1, Fire);
+                    api.cell_by_offset(0, 1).health = 100;
                 }
             }
         }
