@@ -3,16 +3,41 @@
 
 <head>
   <title>Snad Stack</title>
-  <style type="text/css">
-    body {
-        background-color: #000;
-        margin: 0;
-        overflow: hidden;
-    }
-  </style>
 </head>
 
-<body>
+<body style="margin: 0; display: flex; height: 100vh; overflow: hidden">
+  <div style="width: 260px; height: height; border: 1px solid black; padding: 10px">
+    <pre>
+Snad Stack
+Just a browser demo, expect bugs
+Meant to run as native executable
+
+CONTROLS
+left click = place selection
+scroll = resize selection
+resize window = expand environment
+keyboard = change selected powder
+
+a = air / delete 
+g = gas
+w = water
+s = sand
+r = rock
+c = cloner
+f = fire
+p = planks
+o = oil
+l = lava
+
+Particles can interact
+Like fire burn oils
+Water + Lava = Stone
+
+The rest is for you to find out ;)
+    </pre>
+  </div>
+
+
   <script type="module">
     import init from "./snad_stack.js";
     init();

@@ -25,7 +25,7 @@ fn main() {
 async fn run() {
     // The cellular automata grid
     let cell_count = LogicalSize::new(600, 400);
-    let mut enviornment = World::new(cell_count.width, cell_count.height, 9);
+    let mut enviornment = World::new(cell_count.width, cell_count.height, 12);
     // Event handlers
     let event_loop = EventLoop::new();
 
@@ -136,7 +136,7 @@ async fn run() {
             }
             Event::MainEventsCleared => {
                 for i in 0..1 {
-                    enviornment.simulate(3, pixels.frame_mut());
+                    enviornment.simulate(2, pixels.frame_mut());
                 }
                 if let Some((current, previous)) = controller.pixel_position(&enviornment) {
                     enviornment.draw_thick_line(
