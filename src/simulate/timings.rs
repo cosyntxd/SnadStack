@@ -52,6 +52,7 @@ pub struct IterationCount {
     target_rate: f64,
     current_rate: f64,
     total_error: f64,
+    greedy: bool,
     iterations: IterationSteps,
     debug_force_step: Option<usize>,
 }
@@ -63,9 +64,13 @@ impl IterationCount {
             target_rate: 10.0,
             current_rate: 10.0,
             total_error: 0.0,
+            greedy: false,
             iterations: IterationSteps::SleepSecs(0.0),
             debug_force_step: None,
         }
+    }
+    pub fn set_greedy(&mut self, greed: bool) {
+        self.greedy = greed;
     }
     pub fn reset(&mut self) {
         self.current_rate = self.target_rate;
@@ -95,6 +100,17 @@ impl IterationCount {
         let time = 1000.0 / self.current_rate;
         let steps = self.total_error / time;
         self.total_error %= time;
+
+        if self.greedy {
+            if steps > 0.99 {
+                self.iterations = IterationSteps::Iterations(1);
+                self.total_error -= 1;
+            } else {
+                let sleep = time - total_error;
+                self.iterations = IterationSteps::SleepSecs(sleep);
+            }
+            return;
+        }
 
         // Dont pressure cpu too much if simulation time is very high. Need to sumbit pixels on time
         let steps = steps.min(self.current_rate * 4.0);
