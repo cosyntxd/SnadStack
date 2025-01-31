@@ -1,7 +1,7 @@
-use crate::{
-    api::CellsApi,
-    cells::CellType::{self, *},
-};
+use crate::simulate::cells::CellType::*;
+
+use super::api::CellsApi;
+
 pub fn simulate_steps(api: &mut CellsApi) {
     for i in 0..2 {}
     match api.current().material {

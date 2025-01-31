@@ -132,7 +132,7 @@ impl<T> DerefMut for UnsafeShared<T> {
 }
 
 /// Allows for multiple mutable references over type T. Be very careful with this because the rust
-/// borrow checker can no longer guarante safety
+/// borrow checker can no longer guarante safety.
 pub struct UnsafeSharedInner<T> {
     data: T,
     references: AtomicUsize,

@@ -1,4 +1,4 @@
-use crate::{cells::CellType, world::World};
+use crate::simulate::{cells::CellType, world::World};
 
 use winit::{
     dpi::{PhysicalPosition, PhysicalSize},

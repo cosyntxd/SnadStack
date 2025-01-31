@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 use fastrand::Rng;
-use snad_stack::{cells::CellType, world::World};
+use snad_stack::simulate::{cells::CellType, world::World};
 
 fn general_bench(c: &mut Criterion) {
     const WIDTH: u32 = 1600;

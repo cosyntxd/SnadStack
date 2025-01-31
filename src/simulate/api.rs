@@ -1,8 +1,9 @@
-use crate::cells::{Cell, CellType};
-use crate::logic::simulate_steps;
-use crate::world::World;
 use std::cell::UnsafeCell;
 use std::sync::Barrier;
+
+use super::cells::{Cell, CellType};
+use super::logic::simulate_steps;
+use super::world::World;
 
 const ITERATION_ORD_X: &str = match option_env!("SNAD_SIM_ORD_X") {
     Some(e) => e,

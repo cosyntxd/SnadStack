@@ -9,11 +9,7 @@ pub struct Cell {
     pub updated: u8,
     pub discolored: bool,
     pub health: u16,
-    pub lifespan: u16, // particles
-                       // pub velocity_x: i16,
-                       // pub velocity_y: i16,
-                       // pub position_x: i16,
-                       // pub position_y: i16,
+    pub lifespan: u16,
 }
 impl Cell {
     pub fn new(material: CellType) -> Self {

@@ -1,7 +1,9 @@
 use crate::{
-    api::{CellsApi, SharedCellApi, UnsafeShared},
-    cells::{Cell, CellType},
-    input::CenterLocation,
+    gui::input::CenterLocation,
+    simulate::{
+        api::{CellsApi, SharedCellApi, UnsafeShared},
+        cells::{Cell, CellType},
+    },
 };
 use std::{
     ops::{Index, IndexMut},
