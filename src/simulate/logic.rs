@@ -43,18 +43,16 @@ pub fn simulate_steps(api: &mut CellsApi) {
             }
         }
         Wood => {
-            if api.current().discolored == true {
+            if api.current().discolored {
                 let dx = fastrand::isize(-15..15) / 8;
                 let dy = fastrand::isize(-15..15) / 8;
-                if fastrand::u8(0..8) < 3 {
-                    if api.cell_by_offset(dx, dy).material == Air {
-                        api.set_cell(dx, dy, Fire)
-                    }
+                if fastrand::u8(0..8) < 3 && api.cell_by_offset(dx, dy).material == Air {
+                    api.set_cell(dx, dy, Fire)
                 }
             }
         }
         Fire => {
-            let mut c = api.current();
+            let c = api.current();
             c.health += 1;
             if c.health > fastrand::u16(16..2048) {
                 api.set_cell(0, 0, Gas);
@@ -81,14 +79,12 @@ pub fn simulate_steps(api: &mut CellsApi) {
         }
         Oil => {
             let x = fastrand::isize(-5..=5);
-            if api.current().discolored == true {
+            if api.current().discolored {
                 api.current().health += 1;
                 let dx = fastrand::isize(-15..=15) / 8;
                 let dy = fastrand::isize(-15..=15) / 8;
-                if fastrand::u8(0..8) < 3 {
-                    if api.cell_by_offset(dx, dy).material == Air {
-                        api.set_cell(dx, dy, Fire)
-                    }
+                if fastrand::u8(0..8) < 3 && api.cell_by_offset(dx, dy).material == Air {
+                    api.set_cell(dx, dy, Fire)
                 }
             }
             if matches!(api.cell_by_offset(0, -1).material, Air | Fire | Gas) {
@@ -100,7 +96,7 @@ pub fn simulate_steps(api: &mut CellsApi) {
             }
         }
         Gas => {
-            let mut c = api.current();
+            let c = api.current();
             c.health += 1;
             if c.health > fastrand::u16(8..1024) {
                 api.set_cell(0, 0, Air);
@@ -118,7 +114,7 @@ pub fn simulate_steps(api: &mut CellsApi) {
             }
         }
         Lava => {
-            let mut c = api.current();
+            let c = api.current();
             let x = fastrand::isize(-4..=4);
             if api.cell_by_offset(0, -1).material == Air {
                 api.swap_offset(0, -1)
@@ -129,17 +125,12 @@ pub fn simulate_steps(api: &mut CellsApi) {
             }
             for y in -1..=1 {
                 for x in -1..=1 {
-                    match api.cell_by_offset(x as isize, y as isize).material {
-                        Water => api.set_cell(x, y, Stone),
-                        _ => {}
-                    }
+                    if api.cell_by_offset(x, y).material == Water { api.set_cell(x, y, Stone) }
                 }
             }
-            if api.cell_by_offset(0, 1).material == Air {
-                if fastrand::usize(0..16) == 0 {
-                    api.set_cell(0, 1, Fire);
-                    api.cell_by_offset(0, 1).health = 100;
-                }
+            if api.cell_by_offset(0, 1).material == Air && fastrand::usize(0..16) == 0 {
+                api.set_cell(0, 1, Fire);
+                api.cell_by_offset(0, 1).health = 100;
             }
         }
         _ => {}

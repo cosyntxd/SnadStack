@@ -1,5 +1,5 @@
 use pixels::{PixelsBuilder, SurfaceTexture};
-use std::{rc::Rc, time::Duration};
+use std::rc::Rc;
 use winit::{
     dpi::LogicalSize,
     event::{Event, MouseButton, WindowEvent},
@@ -115,8 +115,8 @@ pub fn run() {
                 if let Some(e) = expand {
                     println!("{width:?} {height:?}");
                     enviornment.resize(
-                        (resize.width as u32 / enviornment.density) as usize,
-                        (resize.height as u32 / enviornment.density) as usize,
+                        (resize.width / enviornment.density) as usize,
+                        (resize.height / enviornment.density) as usize,
                         e,
                     );
                 }
@@ -128,10 +128,10 @@ pub fn run() {
                 }
                 if let Some((current, previous)) = controller.pixel_position(&enviornment) {
                     enviornment.draw_thick_line(
-                        current.x as i32,
-                        current.y as i32,
-                        previous.x as i32,
-                        previous.y as i32,
+                        current.x,
+                        current.y,
+                        previous.x,
+                        previous.y,
                         controller.selection_size(),
                         controller.material,
                         controller.mouse_clicked(MouseButton::Left),

@@ -52,7 +52,7 @@ fn general_bench(c: &mut Criterion) {
     group.bench_function("Placing", |b| {
         b.iter_batched_ref(
             || {
-                let mut w = World::new(WIDTH as i32, HEIGHT as i32, 1);
+                let w = World::new(WIDTH as i32, HEIGHT as i32, 1);
                 let p = &mut pixels.clone();
                 let x = rand_range(WIDTH);
                 let y = rand_range(HEIGHT);
@@ -61,10 +61,10 @@ fn general_bench(c: &mut Criterion) {
             },
             |(world, pixels, x, y)| {
                 world.draw_thick_line(
-                    *x as i32,
-                    *y as i32,
-                    (*x as i32 + fastrand::i32(-64..64).max(0)) as i32,
-                    (*y as i32 + fastrand::i32(-64..64).max(0)) as i32,
+                    { *x },
+                    { *y },
+                    ({ *x } + fastrand::i32(-64..64).max(0)) as i32,
+                    ({ *y } + fastrand::i32(-64..64).max(0)) as i32,
                     64,
                     choices[rand_range(choices.len() as u32) as usize],
                     true,

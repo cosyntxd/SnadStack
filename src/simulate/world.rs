@@ -32,11 +32,11 @@ impl World {
         }
     }
     pub fn resize(&mut self, width: usize, height: usize, offsets: CenterLocation) {
-        let mut new_grid = vec![Cell::new(CellType::Air); (width * height) as usize];
+        let mut new_grid = vec![Cell::new(CellType::Air); width * height];
         // TODO: smarter resize
         self.grid
             .chunks_exact(self.width)
-            .zip(new_grid.chunks_exact_mut(width as usize))
+            .zip(new_grid.chunks_exact_mut(width))
             .for_each(|(old, new)| {
                 for (new_element, old_element) in new.iter_mut().zip(old.iter()) {
                     *new_element = *old_element;
@@ -72,18 +72,18 @@ impl World {
                 if distance_non_sqrt >= radius.pow(2) {
                     continue;
                 }
-                let math = ((x2 - x1) as i32) * (index_x - radius) as i32
-                    + ((y2 - y1) as i32 * (index_y - radius) as i32)
+                let math = (x2 - x1) * (index_x - radius) as i32
+                    + ((y2 - y1) * (index_y - radius) as i32)
                     < 0;
                 let corner = math || radius == 1;
 
                 if (distance_non_sqrt as f64).sqrt() + 1.5 >= radius as f64 && corner {
                     for point in &line {
-                        let x = (point.0 as isize + index_x - radius)
+                        let x = (point.0 + index_x - radius)
                             .clamp(0, self.width as isize - 1)
                             as usize;
 
-                        let y = (point.1 as isize + index_y - radius)
+                        let y = (point.1 + index_y - radius)
                             .clamp(0, self.height as isize - 1)
                             as usize;
 
@@ -128,7 +128,7 @@ impl World {
     pub fn simulate(&mut self, steps: u16, pixels: &mut [u8]) {
         let width = self.width; // Will complain about use after borrow without this
         let left_edge_random = fastrand::usize(0..width / 16 + 1);
-        let chunk_width = width as usize / 6;
+        let chunk_width = width / 6;
         let parallelize_chunks = (left_edge_random..width).step_by(chunk_width);
         let arc_api = Arc::new(UnsafeShared::new(SharedCellApi::new(
             self,

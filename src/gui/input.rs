@@ -2,7 +2,7 @@ use crate::simulate::{cells::CellType, world::World};
 
 use winit::{
     dpi::{PhysicalPosition, PhysicalSize},
-    event::{ElementState, Event, MouseButton, MouseScrollDelta, VirtualKeyCode, WindowEvent},
+    event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
     window::Window,
 };
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
@@ -86,7 +86,7 @@ impl InputHelper {
                     self.selection_size = self.selection_size.clamp(1.0, self.max_size);
                 }
                 WindowEvent::Resized(size) => {
-                    self.current_window_size = size.clone();
+                    self.current_window_size = *size;
                     self.curr_center = CenterLocation::from(size, self.env_density);
                     self.max_size = (size.width.max(size.width) / self.env_density) as f32;
                 }
@@ -109,7 +109,7 @@ impl InputHelper {
     }
     pub fn mouse_clicked(&mut self, button: MouseButton) -> bool {
         let index = Self::mouse_button_to_int(&button);
-        self.mouse_states[index as usize]
+        self.mouse_states[index]
     }
     pub fn selection_size(&mut self) -> isize {
         self.selection_size as isize

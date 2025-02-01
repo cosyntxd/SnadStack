@@ -37,7 +37,7 @@ impl Cell {
         let mut rgb = [0, 0, 0];
         rgb.iter_mut().enumerate().for_each(|(index, value)| {
             let rgba_diff = rgb_end[index] as i16 - rgb_start[index] as i16;
-            let rgba_change = rgba_diff as i16 * random_variance / 100;
+            let rgba_change = rgba_diff * random_variance / 100;
             *value = (rgb_start[index] as i16 + rgba_change as i16) as u8;
         });
         rgb
