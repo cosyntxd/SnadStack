@@ -1,6 +1,4 @@
-.DS_Store
-/target
-
-/web/*
-!/web/run.sh
-!/web/index.html
+Cargo.lock
+target/
+do_not_commit/
+old/
