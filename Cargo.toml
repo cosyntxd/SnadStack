@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-wgpu = "26.0.0"
+wgpu = "27.0.0"
 winit = "0.29"
 pollster = "0.4"
 bytemuck = "1.19"
