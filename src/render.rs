@@ -1,6 +1,6 @@
 // render.rs
 use bytemuck::{Pod, Zeroable};
-use std::{collections::{HashMap, VecDeque}, mem, sync::Arc};
+use std::{mem, sync::Arc};
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 use glam::{Vec2, Vec3, Mat4};
@@ -9,10 +9,11 @@ use glam::{Vec2, Vec3, Mat4};
 pub const TILE_SIZE: u32 = 256;
 pub const MAX_PHYSICAL_TEXTURES: u32 = 256;
 const MAX_DIFF_PER_FRAME: usize = 65536;
-const MAX_INSTANCES: usize = 1024;
+// Constraint: One instance per texture
+const MAX_INSTANCES: usize = MAX_PHYSICAL_TEXTURES as usize;
 
-type TileId = u8;
-
+// Constraint: Type definition used throughout
+pub type TextureId = u8;
 
 // --- Shared Data Structures (sent to GPU) ---
 
@@ -21,7 +22,7 @@ type TileId = u8;
 pub struct PixelDiff {
     pub local_x: u8,
     pub local_y: u8,
-    pub tile_id: u8, // Maps to the physical texture array index
+    pub tile_id: TextureId, // Maps to the physical texture array index
     pub r: u8,
     pub g: u8,
     pub b: u8,
@@ -31,9 +32,10 @@ pub struct PixelDiff {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct TileInstance {
-    pub position: [f32; 2],
-    pub texture_index: u32,
-    pub padding: u32,
+    pub position: [f32; 2],     // 8 bytes
+    pub _padding: [u8; 3],      // 3 bytes (Pre-padding as requested)
+    pub texture_id: TextureId,  // 1 byte
+    // Total Size: 12 bytes
 }
 
 #[repr(C)]
@@ -54,8 +56,11 @@ struct ComputeParams {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 struct ClearParams {
-    texture_index: u32,
-    _pad: [u32; 3],
+    // Uniforms usually require 4-byte alignment for fields.
+    // We pad the TextureId to fill the 4-byte slot.
+    pub texture_index: TextureId,
+    pub _pad1: [u8; 3], 
+    pub _pad2: [u32; 3], // align to 16 bytes for Uniform block
 }
 
 // --- Shader Logic ---
@@ -64,7 +69,9 @@ struct CameraUniform { view_proj: mat4x4<f32>, screen_size: vec2<f32>, padding: 
 @group(0) @binding(0) var<uniform> camera: CameraUniform;
 
 struct VertexInput { @location(0) position: vec2<f32>, @location(1) uv: vec2<f32> };
-struct InstanceInput { @location(2) tile_world_pos: vec2<f32>, @location(3) texture_index: u32 };
+// texture_index comes in as u32 (4 bytes). 
+// Due to Rust-side pre-padding [pad, pad, pad, id], the ID is in the MSB (Little Endian).
+struct InstanceInput { @location(2) tile_world_pos: vec2<f32>, @location(3) texture_raw: u32 };
 struct VertexOutput { @builtin(position) clip_position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) @interpolate(flat) texture_index: u32 };
 
 @vertex
@@ -74,7 +81,10 @@ fn vs_main(model: VertexInput, instance: InstanceInput) -> VertexOutput {
     let world_pos = instance.tile_world_pos + (model.position * 256.0); 
     out.clip_position = camera.view_proj * vec4<f32>(world_pos, 0.0, 1.0);
     out.uv = model.uv;
-    out.texture_index = instance.texture_index;
+    
+    // Unpack TextureId from the MSB of the u32 stream
+    out.texture_index = instance.texture_raw >> 24u;
+    
     return out;
 }
 
@@ -104,7 +114,7 @@ fn update_world(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let packed_data = input_diffs.diffs[index];
     let x = (packed_data.low) & 0xFFu;
     let y = (packed_data.low >> 8u) & 0xFFu;
-    let tile_id = (packed_data.low >> 16u) & 0xFFu;
+    let tile_id = (packed_data.low >> 16u) & 0xFFu; // PixelDiff.tile_id is byte 2
     let r_u = (packed_data.low >> 24u) & 0xFFu;
     let g_u = (packed_data.high) & 0xFFu;
     let b_u = (packed_data.high >> 8u) & 0xFFu;
@@ -113,6 +123,7 @@ fn update_world(@builtin(global_invocation_id) global_id: vec3<u32>) {
     textureStore(world_textures, vec2<i32>(i32(x), i32(y)), i32(tile_id), color);
 }
 
+// ClearParams matches Rust struct with standard u32 alignment
 struct ClearParams { texture_index: u32 };
 @group(0) @binding(3) var<uniform> clear_params: ClearParams;
 
@@ -133,7 +144,6 @@ pub struct GpuScreenManager {
     config: wgpu::SurfaceConfiguration,
     pub size: PhysicalSize<u32>,
 
-    // Stored to allow queue.write_texture
     pub texture_array: wgpu::Texture,
 
     render_pipeline: wgpu::RenderPipeline,
@@ -168,7 +178,6 @@ impl GpuScreenManager {
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
-                // REQUIRED: Texture arrays and non-uniform indexing
                 required_features: wgpu::Features::TEXTURE_BINDING_ARRAY
                     | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
                 ..Default::default()
@@ -201,7 +210,7 @@ impl GpuScreenManager {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        // Instance Buffer
+        // Instance Buffer - Scaled to MAX_INSTANCES (256)
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Instance Buffer"),
             size: (MAX_INSTANCES * mem::size_of::<TileInstance>()) as u64,
@@ -215,7 +224,6 @@ impl GpuScreenManager {
             size: wgpu::Extent3d { width: TILE_SIZE, height: TILE_SIZE, depth_or_array_layers: MAX_PHYSICAL_TEXTURES },
             mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
-            // COPY_DST needed for update_tile
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -282,7 +290,15 @@ impl GpuScreenManager {
             label: Some("Render PL"), layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &[
                 wgpu::VertexBufferLayout { array_stride: 16, step_mode: wgpu::VertexStepMode::Vertex, attributes: &[wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x2 }, wgpu::VertexAttribute { offset: 8, shader_location: 1, format: wgpu::VertexFormat::Float32x2 }] },
-                wgpu::VertexBufferLayout { array_stride: 16, step_mode: wgpu::VertexStepMode::Instance, attributes: &[wgpu::VertexAttribute { offset: 0, shader_location: 2, format: wgpu::VertexFormat::Float32x2 }, wgpu::VertexAttribute { offset: 8, shader_location: 3, format: wgpu::VertexFormat::Uint32 }] },
+                wgpu::VertexBufferLayout { 
+                    array_stride: 12, // Adjusted for new TileInstance size
+                    step_mode: wgpu::VertexStepMode::Instance, 
+                    attributes: &[
+                        wgpu::VertexAttribute { offset: 0, shader_location: 2, format: wgpu::VertexFormat::Float32x2 }, 
+                        // Reads 4 bytes: [pad, pad, pad, id]. Shader shifts to get ID.
+                        wgpu::VertexAttribute { offset: 8, shader_location: 3, format: wgpu::VertexFormat::Uint32 }
+                    ] 
+                },
             ] },
             fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some("fs_main"), compilation_options: Default::default(), targets: &[Some(wgpu::ColorTargetState { format: config.format, blend: Some(wgpu::BlendState::REPLACE), write_mask: wgpu::ColorWrites::ALL })] }),
             primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleStrip, ..Default::default() },
@@ -327,10 +343,7 @@ impl GpuScreenManager {
         self.queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(instances));
     }
 
-    /// Uploads a full tile to the GPU. Thread-safe with respect to apply_diffs.
-    /// Order of CPU calls determines order of GPU execution.
-    pub fn update_tile(&self, tile_id: u32, data: &[u8]) {
-        if tile_id >= MAX_PHYSICAL_TEXTURES { return; }
+    pub fn update_tile(&self, tile_id: TextureId, data: &[u8]) {
         let expected_size = (TILE_SIZE * TILE_SIZE * 4) as usize;
         if data.len() != expected_size { return; }
 
@@ -338,7 +351,7 @@ impl GpuScreenManager {
             wgpu::TexelCopyTextureInfo {
                 texture: &self.texture_array,
                 mip_level: 0,
-                origin: wgpu::Origin3d { x: 0, y: 0, z: tile_id },
+                origin: wgpu::Origin3d { x: 0, y: 0, z: tile_id as u32 },
                 aspect: wgpu::TextureAspect::All,
             },
             data,
@@ -351,29 +364,23 @@ impl GpuScreenManager {
         );
     }
 
-    pub fn clear_chunks(&self, texture_indices: &[u32]) {
+    pub fn clear_chunks(&self, texture_indices: &[TextureId]) {
         if texture_indices.is_empty() { return; }
         
-        // BUG FIX: We must submit each clear operation separately to ensure the 
-        // queue writes to the uniform buffer don't race.
         for &idx in texture_indices {
             let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Clear Enc") });
             
-            // 1. Queue Write (schedules data transfer)
-            let params = ClearParams { texture_index: idx, _pad: [0; 3] };
+            // TextureId is u8, but uniform must satisfy alignment.
+            let params = ClearParams { texture_index: idx, _pad1: [0; 3], _pad2: [0; 3] };
             self.queue.write_buffer(&self.clear_params_buffer, 0, bytemuck::cast_slice(&[params]));
             
-            // 2. Encode Dispatch
             {
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
                 cpass.set_pipeline(&self.clear_pipeline);
                 cpass.set_bind_group(0, &self.compute_bind_group, &[]);
-                // Dispatch (16, 16, 1) workgroups. Each workgroup is (16, 16) threads.
-                // Total 256x256 threads.
                 cpass.dispatch_workgroups(16, 16, 1);
             }
             
-            // 3. Submit immediately (Executes Write -> Dispatch in order)
             self.queue.submit(Some(encoder.finish()));
         }
     }
