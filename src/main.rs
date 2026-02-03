@@ -1,152 +1,310 @@
-// main.rs
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::Arc,
-};
-use winit::{
-    dpi::PhysicalSize,
-    event::*,
-    event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
-};
-pub mod chunks;
-pub mod render;
-use render::{GpuScreenManager, PixelDiff, TileInstance, MAX_PHYSICAL_TEXTURES, TILE_SIZE};
+mod chunks;
+mod render;
 
-use crate::chunks::ChunkManager;
+use std::collections::HashMap;
+use std::fs::{self, File};
+use std::io::{Read, Write};
+use std::path::Path;
+use std::sync::{mpsc, Arc};
+use std::thread;
 
-// --- Chunk Storage (World State) ---
+use chunks::{ChunkCommand, ChunkCoord, ChunkManager, CHUNK_BYTE_SIZE};
+use glam::Vec2;
+use render::{GpuScreenManager, PixelDiff, TILE_SIZE};
+use winit::dpi::PhysicalPosition;
+use winit::event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event_loop::{ControlFlow, EventLoop};
+use winit::window::WindowBuilder;
 
-// --- Application Logic ---
+const DATA_DIR: &str = "world_data";
 
-struct App {
-    gpu: GpuScreenManager,
-    chunk_manager: ChunkManager,
-    // Camera State
-    camera_pos: glam::Vec2,
-    zoom: f32,
-    // Input State
-    mouse_pressed: bool,
-    mouse_pos: glam::Vec2,
-    last_mouse_pos: glam::Vec2,
-    pan_btn: bool,
+struct ChunkRequest {
+    coord: ChunkCoord,
 }
 
-impl App {
-    async fn new(window: Arc<winit::window::Window>) -> Self {
-        let gpu = GpuScreenManager::new(window).await;
-        Self {
-            gpu,
-            chunk_manager: ChunkManager::new(),
-            camera_pos: glam::Vec2::ZERO,
-            zoom: 1.0,
-            mouse_pressed: false,
-            mouse_pos: glam::Vec2::ZERO,
-            last_mouse_pos: glam::Vec2::ZERO,
-            pan_btn: false,
-        }
+struct ChunkResult {
+    coord: ChunkCoord,
+    data: Vec<u8>,
+}
+
+fn main() {
+    env_logger::init();
+
+    if !Path::new(DATA_DIR).exists() {
+        fs::create_dir(DATA_DIR).expect("Failed to create world directory");
     }
 
-    fn update_and_render(&mut self) {
-        // 1. Game State Updates (Chunk visibility)
-        let new_chunks =
-            self.chunk_manager
-                .update_visible_bounds(self.camera_pos, self.gpu.size, self.zoom);
+    let (tx_req, rx_req) = mpsc::channel::<ChunkRequest>();
+    let (tx_res, rx_res) = mpsc::channel::<ChunkResult>();
 
-        // 2. Prepare GPU Commands
-        let mut load_diffs = Vec::new();
-        let mut chunks_to_clear = Vec::new();
+    thread::spawn(move || {
+        while let Ok(req) = rx_req.recv() {
+            let mut buffer = vec![0u8; CHUNK_BYTE_SIZE];
+            
+            if !load_chunk_from_disk(req.coord, &mut buffer) {
+                generate_procedural_chunk(req.coord, &mut buffer);
+            }
 
-        for (slot, coords) in new_chunks {
-            chunks_to_clear.push(slot);
-            let restored = self.chunk_manager.load_chunk_pixels(coords, slot as u8);
-            load_diffs.extend(restored);
+            let _ = tx_res.send(ChunkResult {
+                coord: req.coord,
+                data: buffer,
+            });
         }
+    });
 
-        // 3. User Interaction (Drawing)
-        let mut input_diffs = Vec::new();
-        if self.mouse_pressed {
-            let world_x = self.camera_pos.x + (self.mouse_pos.x / self.zoom);
-            let world_y = self.camera_pos.y + (self.mouse_pos.y / self.zoom);
+    let event_loop = EventLoop::new().unwrap();
+    let window = Arc::new(
+        WindowBuilder::new()
+            .with_title("Sand")
+            .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0))
+            .build(&event_loop)
+            .unwrap(),
+    );
 
-            for dy in 0..5 {
-                for dx in 0..5 {
-                    let wx = (world_x + dx as f32) as i32;
-                    let wy = (world_y + dy as f32) as i32;
-                    let cx = (wx as f32 / TILE_SIZE as f32).floor() as i32;
-                    let cy = (wy as f32 / TILE_SIZE as f32).floor() as i32;
+    let mut gpu_manager = pollster::block_on(GpuScreenManager::new(window.clone()));
+    let mut chunk_manager = ChunkManager::new();
+    let mut pending_uploads: HashMap<ChunkCoord, (u32, Arc<[u8; 262144]>)> = HashMap::new();
 
-                    if let Some(&tile_id) = self.chunk_manager.active_chunks.get(&(cx, cy)) {
-                        let local_x = (wx.rem_euclid(TILE_SIZE as i32)) as u8;
-                        let local_y = (wy.rem_euclid(TILE_SIZE as i32)) as u8;
-                        input_diffs.push(PixelDiff {
-                            local_x,
-                            local_y,
-                            tile_id: tile_id as u8,
-                            r: 255,
-                            g: 0,
-                            b: 255,
-                            _padding: 0,
+    let mut camera_pos = Vec2::ZERO; 
+    let mut zoom = 1.0;
+    
+    let mut mouse_pos = PhysicalPosition::new(0.0, 0.0);
+    let mut is_drawing = false;
+    let mut is_panning = false;
+    let mut last_mouse_pos = PhysicalPosition::new(0.0, 0.0);
+
+    let mut frame_count = 0;
+    let mut last_frame_time = std::time::Instant::now();
+
+    event_loop.run(move |event, target| {
+        target.set_control_flow(ControlFlow::Poll);
+
+        match event {
+            Event::WindowEvent { event, .. } => match event {
+                WindowEvent::CloseRequested => target.exit(),
+                
+                WindowEvent::Resized(new_size) => {
+                    gpu_manager.resize(new_size);
+                }
+
+                WindowEvent::CursorMoved { position, .. } => {
+                    mouse_pos = position;
+                    
+                    if is_panning {
+                        let dx = position.x - last_mouse_pos.x;
+                        let dy = position.y - last_mouse_pos.y;
+                        
+                        camera_pos.x -= dx as f32 / zoom;
+                        camera_pos.y -= dy as f32 / zoom;
+                    }
+                    
+                    last_mouse_pos = position;
+                }
+
+                WindowEvent::MouseInput { state, button, .. } => {
+                    match button {
+                        MouseButton::Left => {
+                            is_drawing = state == ElementState::Pressed;
+                        }
+                        MouseButton::Middle | MouseButton::Right => {
+                            is_panning = state == ElementState::Pressed;
+                        }
+                        _ => {}
+                    }
+                }
+                
+                WindowEvent::MouseWheel { delta, .. } => {
+                    let scroll_y = match delta {
+                        MouseScrollDelta::LineDelta(_, y) => y,
+                        MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.01,
+                    };
+
+                    let zoom_sensitivity = 0.1;
+                    let target_zoom = zoom * (1.0 + scroll_y * zoom_sensitivity);
+                    let min_zoom = gpu_manager.size.width as f32 / 3500.0; 
+                    let max_zoom = 5.0;
+
+                    zoom = target_zoom.clamp(min_zoom, max_zoom);
+                }
+                
+                WindowEvent::RedrawRequested => {
+                    while let Ok(result) = rx_res.try_recv() {
+                        if let Some((physical_id, engine_buffer_arc)) = pending_uploads.remove(&result.coord) {
+                            
+                            // SAFETY: good enough
+                            unsafe {
+                                let dest_ptr = engine_buffer_arc.as_ptr() as *mut u8;
+                                std::ptr::copy_nonoverlapping(result.data.as_ptr(), dest_ptr, CHUNK_BYTE_SIZE);
+                                
+                                let slice = std::slice::from_raw_parts(dest_ptr, CHUNK_BYTE_SIZE);
+                                gpu_manager.update_tile(physical_id as u8, slice);
+                            }
+                        }
+                    }
+
+                    let view_width = gpu_manager.size.width as f32 / zoom;
+                    let view_height = gpu_manager.size.height as f32 / zoom;
+                    
+                    let top_left_cam = Vec2::new(
+                        camera_pos.x - view_width / 2.0,
+                        camera_pos.y - view_height / 2.0
+                    );
+
+                    gpu_manager.update_camera(top_left_cam, zoom);
+                    let commands = chunk_manager.update(camera_pos, gpu_manager.size, zoom);
+                    
+                    for command in commands {
+                        match command {
+                            ChunkCommand::UploadToGpu { physical_id, coord, data } => {
+                                pending_uploads.insert(coord, (physical_id as u32, data));
+                                tx_req.send(ChunkRequest { coord }).unwrap();
+                            }
+                            ChunkCommand::EvictedFromGpu { coord, data } => {
+                                pending_uploads.remove(&coord);
+                                save_chunk_to_disk(coord, &*data);
+                                chunk_manager.release_chunk(coord);
+                            }
+                        }
+                    }
+
+                    if is_drawing {
+                        let diffs = handle_drawing(
+                            &mut chunk_manager, 
+                            &gpu_manager, 
+                            mouse_pos, 
+                            top_left_cam, 
+                            zoom
+                        );
+                        if !diffs.is_empty() {
+                            gpu_manager.apply_diffs(&diffs);
+                        }
+                    }
+
+                    let instances = chunk_manager.get_instances();
+                    gpu_manager.upload_instances(&instances);
+                    
+                    match gpu_manager.render(instances.len() as u32) {
+                        Ok(_) => {}
+                        Err(wgpu::SurfaceError::Lost) => gpu_manager.resize(gpu_manager.size),
+                        Err(wgpu::SurfaceError::OutOfMemory) => target.exit(),
+                        Err(e) => eprintln!("{:?}", e),
+                    }
+
+                    frame_count += 1;
+                    if last_frame_time.elapsed().as_secs() >= 1 {
+                        println!("FPS: {}", frame_count);
+                        frame_count = 0;
+                        last_frame_time = std::time::Instant::now();
+                    }
+                }
+                _ => {}
+            },
+            Event::AboutToWait => {
+                window.request_redraw();
+            }
+            _ => {}
+        }
+    });
+}
+
+fn get_chunk_path(coord: ChunkCoord) -> std::path::PathBuf {
+    Path::new(DATA_DIR).join(format!("chunk_{}_{}.bin", coord.x, coord.y))
+}
+
+fn load_chunk_from_disk(coord: ChunkCoord, buffer: &mut [u8]) -> bool {
+    let path = get_chunk_path(coord);
+    if path.exists() {
+        if let Ok(mut file) = File::open(path) {
+            if file.read_exact(buffer).is_ok() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn save_chunk_to_disk(coord: ChunkCoord, data: &[u8]) {
+    let path = get_chunk_path(coord);
+    if let Ok(mut file) = File::create(path) {
+        let _ = file.write_all(data);
+    }
+}
+
+fn generate_procedural_chunk(coord: ChunkCoord, buffer: &mut [u8]) {
+    for y in 0..TILE_SIZE as i32 {
+        for x in 0..TILE_SIZE as i32 {
+            let world_x = (coord.x * TILE_SIZE as i32) + x;
+            let world_y = (coord.y * TILE_SIZE as i32) + y;
+
+            let v1 = (world_x as f32 * 0.01).sin();
+            let v2 = (world_y as f32 * 0.01).cos();
+            let v3 = ((world_x as f32 * 0.005) + (world_y as f32 * 0.005)).sin();
+
+            let val = ((v1 + v2 + v3) / 3.0 * 127.0 + 128.0) as u8;
+
+            let idx = ((y * TILE_SIZE as i32 + x) * 4) as usize;
+            buffer[idx] = val;         
+            buffer[idx + 1] = val;     
+            buffer[idx + 2] = val / 2; 
+            buffer[idx + 3] = 255;     
+        }
+    }
+}
+
+fn handle_drawing(
+    chunk_manager: &mut ChunkManager, 
+    _gpu_manager: &GpuScreenManager,
+    mouse_pos: PhysicalPosition<f64>,
+    top_left_camera: Vec2, 
+    zoom: f32
+) -> Vec<PixelDiff> {
+    let mut diffs = Vec::new();
+
+    let world_x = top_left_camera.x + (mouse_pos.x as f32 / zoom);
+    let world_y = top_left_camera.y + (mouse_pos.y as f32 / zoom);
+
+    let chunk_x = (world_x / TILE_SIZE as f32).floor() as i32;
+    let chunk_y = (world_y / TILE_SIZE as f32).floor() as i32;
+    let coord = ChunkCoord { x: chunk_x, y: chunk_y };
+
+    let local_x = (world_x as i32).rem_euclid(TILE_SIZE as i32);
+    let local_y = (world_y as i32).rem_euclid(TILE_SIZE as i32);
+
+    if let Some(chunk_data_arc) = chunk_manager.cpu_backed_buffer.get(&coord) {
+        if let Some(&texture_id) = chunk_manager.active_mapping.get(&coord) {
+            
+            let data = unsafe { 
+                let ptr = chunk_data_arc.as_ptr() as *mut u8;
+                std::slice::from_raw_parts_mut(ptr, CHUNK_BYTE_SIZE) 
+            };
+
+            let brush_size = 5;
+            for dy in -brush_size..=brush_size {
+                for dx in -brush_size..=brush_size {
+                    if dx*dx + dy*dy > brush_size*brush_size { continue; }
+
+                    let lx = local_x + dx;
+                    let ly = local_y + dy;
+
+                    if lx >= 0 && lx < TILE_SIZE as i32 && ly >= 0 && ly < TILE_SIZE as i32 {
+                        let idx = ((ly * TILE_SIZE as i32 + lx) * 4) as usize;
+                        
+                        data[idx] = 255;
+                        data[idx+1] = 0;
+                        data[idx+2] = 0;
+                        data[idx+3] = 255;
+
+                        diffs.push(PixelDiff {
+                            local_x: lx as u8,
+                            local_y: ly as u8,
+                            tile_id: texture_id,
+                            r: 255, g: 0, b: 0, _padding: 0,
                         });
                     }
                 }
             }
         }
-
-        // 4. Save Input & Merge
-        if !input_diffs.is_empty() {
-            self.chunk_manager.save_pixels(&input_diffs);
-            load_diffs.extend(input_diffs);
-        }
-
-        // 5. Submit to Renderer
-        self.gpu.update_camera(self.camera_pos, self.zoom);
-        self.gpu.clear_chunks(&chunks_to_clear);
-        self.gpu.apply_diffs(&load_diffs);
-        self.gpu.upload_instances(&self.chunk_manager.instances);
-        let _ = self.gpu.render(self.chunk_manager.instances.len() as u32);
     }
-}
 
-fn main() {
-    let event_loop = EventLoop::new().unwrap();
-    let window = Arc::new(
-        WindowBuilder::new()
-            .with_title("Sand Serialization")
-            .build(&event_loop)
-            .unwrap(),
-    );
-    let mut app = pollster::block_on(App::new(window.clone()));
-
-    let _ = event_loop.run(move |event, target| match event {
-        Event::WindowEvent { event, window_id } if window_id == window.id() => match event {
-            WindowEvent::CloseRequested => target.exit(),
-            WindowEvent::RedrawRequested => app.update_and_render(),
-            WindowEvent::Resized(size) => app.gpu.resize(size),
-            WindowEvent::MouseInput { state, button, .. } => match button {
-                MouseButton::Left => app.mouse_pressed = state == ElementState::Pressed,
-                MouseButton::Right => app.pan_btn = state == ElementState::Pressed,
-                _ => {}
-            },
-            WindowEvent::CursorMoved { position, .. } => {
-                let new_pos = glam::Vec2::new(position.x as f32, position.y as f32);
-                if app.pan_btn {
-                    let delta = app.last_mouse_pos - new_pos;
-                    app.camera_pos += delta / app.zoom;
-                }
-                app.mouse_pos = new_pos;
-                app.last_mouse_pos = new_pos;
-            }
-            WindowEvent::MouseWheel { delta, .. } => {
-                let change = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y,
-                    MouseScrollDelta::PixelDelta(p) => p.y as f32,
-                };
-                app.zoom = (app.zoom + change * 0.1).clamp(0.1, 5.0);
-            }
-            _ => {}
-        },
-        Event::AboutToWait => window.request_redraw(),
-        _ => {}
-    });
+    diffs
 }

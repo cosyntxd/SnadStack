@@ -2,3 +2,4 @@ Cargo.lock
 target/
 do_not_commit/
 old/
+world_data/
