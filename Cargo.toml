@@ -3,10 +3,21 @@ name = "sand-sim"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "sand_sim"
+path = "src/lib.rs"
+
+[[bench]]
+name = "render"
+harness = false
+
+[[bench]]
+name = "chunk_manage"
+harness = false
+
 [dependencies]
 wgpu = "27.0.0"
 winit = "0.29"
-pollster = "0.4"
 bytemuck = "1.19"
 log = "0.4"
 env_logger = "0.11"
@@ -14,4 +25,6 @@ anyhow = "1.0.100"
 glam = "0.30.9"
 rustc-hash = "2.1.1"
 
+[dev-dependencies]
+pollster = "0.4"
 criterion = { version = "0.5", features = ["async_tokio"] }
