@@ -118,7 +118,7 @@ fn clear_tile(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 pub struct GpuScreenManager {
     surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
+    pub device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     pub size: PhysicalSize<u32>,
