@@ -1,22 +1,21 @@
+mod bodies;
 mod chunks;
+mod element;
 mod render;
+mod world;
 
-use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::{Read, Write};
-use std::path::Path;
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
-use chunks::{ChunkCommand, ChunkCoord, ChunkManager, CHUNK_BYTE_SIZE};
+use chunks::{ChunkCommand, ChunkCoord, ChunkManager, CHUNK_BYTE_SIZE, CHUNK_ELEMENTS};
+use element::{CellType, Element};
 use glam::Vec2;
-use render::{GpuScreenManager, PixelDiff, TILE_SIZE};
+use render::{GpuScreenManager, PixelDiff, TextureId, TILE_SIZE};
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::WindowBuilder;
-
-const DATA_DIR: &str = "world_data";
 
 struct ChunkRequest {
     coord: ChunkCoord,
@@ -24,33 +23,50 @@ struct ChunkRequest {
 
 struct ChunkResult {
     coord: ChunkCoord,
-    data: Vec<u8>,
+    pixels: Box<[u8; CHUNK_BYTE_SIZE]>,
+    elements: Box<[Element; CHUNK_ELEMENTS]>,
 }
 
 fn main() {
     env_logger::init();
 
-    if !Path::new(DATA_DIR).exists() {
-        fs::create_dir(DATA_DIR).expect("Failed to create world directory");
-    }
-
     let (tx_req, rx_req) = mpsc::channel::<ChunkRequest>();
     let (tx_res, rx_res) = mpsc::channel::<ChunkResult>();
 
-    thread::spawn(move || {
-        while let Ok(req) = rx_req.recv() {
-            let mut buffer = vec![0u8; CHUNK_BYTE_SIZE];
-            
-            if !load_chunk_from_disk(req.coord, &mut buffer) {
-                generate_procedural_chunk(req.coord, &mut buffer);
-            }
+    let rx_req = Arc::new(Mutex::new(rx_req));
 
-            let _ = tx_res.send(ChunkResult {
-                coord: req.coord,
-                data: buffer,
-            });
-        }
-    });
+    // Background thread pool for generating chunks
+    for _ in 0..4 {
+        let rx_req = Arc::clone(&rx_req);
+        let tx_res = tx_res.clone();
+        thread::spawn(move || loop {
+            let req = {
+                let rx = rx_req.lock().unwrap();
+                rx.recv()
+            };
+
+            match req {
+                Ok(req) => {
+                    let mut pixels: Box<[u8; CHUNK_BYTE_SIZE]> = vec![0u8; CHUNK_BYTE_SIZE]
+                        .into_boxed_slice()
+                        .try_into()
+                        .unwrap();
+                    let mut elements: Box<[Element; CHUNK_ELEMENTS]> =
+                        vec![Element::empty(); CHUNK_ELEMENTS]
+                            .into_boxed_slice()
+                            .try_into()
+                            .unwrap();
+                    generate_procedural_chunk(req.coord, pixels.as_mut(), elements.as_mut());
+                    let _ = tx_res.send(ChunkResult {
+                        coord: req.coord,
+                        pixels,
+                        elements,
+                    });
+                }
+                Err(_) => break, // Channel closed
+            }
+        });
+    }
 
     let event_loop = EventLoop::new().unwrap();
     let window = Arc::new(
@@ -63,18 +79,25 @@ fn main() {
 
     let mut gpu_manager = pollster::block_on(GpuScreenManager::new(window.clone()));
     let mut chunk_manager = ChunkManager::new();
-    let mut pending_uploads: HashMap<ChunkCoord, (u32, Arc<[u8; 262144]>)> = HashMap::new();
 
-    let mut camera_pos = Vec2::ZERO; 
-    let mut zoom = 1.0;
-    
+    let mut camera_pos = Vec2::ZERO;
+    let mut zoom = 10.0;
+
     let mut mouse_pos = PhysicalPosition::new(0.0, 0.0);
     let mut is_drawing = false;
+    let mut place_material = CellType::Sand;
     let mut is_panning = false;
     let mut last_mouse_pos = PhysicalPosition::new(0.0, 0.0);
 
     let mut frame_count = 0;
     let mut last_frame_time = std::time::Instant::now();
+
+    let mut last_tick_time = std::time::Instant::now();
+    let tick_rate = std::time::Duration::from_secs_f64(1.0 / 50.0);
+    let mut world = world::CompleteWorld::new();
+
+    let mut accumulated_diffs = Vec::new();
+    let mut last_render_tick = 0;
 
     event_loop.run(move |event, target| {
         target.set_control_flow(ControlFlow::Poll);
@@ -82,37 +105,75 @@ fn main() {
         match event {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => target.exit(),
-                
+
                 WindowEvent::Resized(new_size) => {
                     gpu_manager.resize(new_size);
                 }
 
                 WindowEvent::CursorMoved { position, .. } => {
                     mouse_pos = position;
-                    
+
                     if is_panning {
                         let dx = position.x - last_mouse_pos.x;
                         let dy = position.y - last_mouse_pos.y;
-                        
+
                         camera_pos.x -= dx as f32 / zoom;
                         camera_pos.y -= dy as f32 / zoom;
                     }
-                    
+
                     last_mouse_pos = position;
                 }
 
-                WindowEvent::MouseInput { state, button, .. } => {
-                    match button {
-                        MouseButton::Left => {
-                            is_drawing = state == ElementState::Pressed;
+                WindowEvent::MouseInput { state, button, .. } => match button {
+                    MouseButton::Left => {
+                        is_drawing = state == ElementState::Pressed;
+                        if is_drawing {
+                            place_material = CellType::Sand;
                         }
-                        MouseButton::Middle | MouseButton::Right => {
-                            is_panning = state == ElementState::Pressed;
+                    }
+                    MouseButton::Right => {
+                        is_drawing = state == ElementState::Pressed;
+                        if is_drawing {
+                            place_material = CellType::Air;
                         }
-                        _ => {}
+                    }
+                    MouseButton::Middle => {
+                        is_panning = state == ElementState::Pressed;
+                    }
+                    _ => {}
+                },
+
+                WindowEvent::KeyboardInput { event, .. } => {
+                    if event.state == ElementState::Pressed {
+                        if let PhysicalKey::Code(KeyCode::KeyB) = event.physical_key {
+                            let world_x = camera_pos.x
+                                - ((gpu_manager.size.width as f32 / zoom) * 0.5)
+                                + (mouse_pos.x as f32 / zoom);
+                            let world_y = camera_pos.y
+                                - ((gpu_manager.size.height as f32 / zoom) * 0.5)
+                                + (mouse_pos.y as f32 / zoom);
+                            let base_x = world_x as i32;
+                            let base_y = world_y as i32;
+
+                            for y in 0..20 {
+                                for x in 0..50 {
+                                    let mut el = Element::empty();
+                                    el.material = CellType::Brick;
+                                    el.rgb = [180, 40, 40];
+                                    chunk_manager.set_element_with_diff(
+                                        base_x + x,
+                                        base_y + y,
+                                        el,
+                                        &mut accumulated_diffs,
+                                        world.tick,
+                                        last_render_tick,
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
-                
+
                 WindowEvent::MouseWheel { delta, .. } => {
                     let scroll_y = match delta {
                         MouseScrollDelta::LineDelta(_, y) => y,
@@ -121,70 +182,86 @@ fn main() {
 
                     let zoom_sensitivity = 0.1;
                     let target_zoom = zoom * (1.0 + scroll_y * zoom_sensitivity);
-                    let min_zoom = gpu_manager.size.width as f32 / 3500.0; 
-                    let max_zoom = 5.0;
+                    let min_zoom = gpu_manager.size.width as f32 / 4300.0;
+                    let max_zoom = 4.0;
 
                     zoom = target_zoom.clamp(min_zoom, max_zoom);
                 }
-                
+
                 WindowEvent::RedrawRequested => {
+                    // 1. Process Loaded Chunks
                     while let Ok(result) = rx_res.try_recv() {
-                        if let Some((physical_id, engine_buffer_arc)) = pending_uploads.remove(&result.coord) {
-                            
-                            // SAFETY: good enough
-                            unsafe {
-                                let dest_ptr = engine_buffer_arc.as_ptr() as *mut u8;
-                                std::ptr::copy_nonoverlapping(result.data.as_ptr(), dest_ptr, CHUNK_BYTE_SIZE);
-                                
-                                let slice = std::slice::from_raw_parts(dest_ptr, CHUNK_BYTE_SIZE);
-                                gpu_manager.update_tile(physical_id as u8, slice);
+                        if let Some(&physical_id) = chunk_manager.active_mapping.get(&result.coord)
+                        {
+                            let slot = &mut chunk_manager.physical_slots[physical_id as usize];
+                            // Ensure the slot hasn't been reassigned to another coordinate while this one generated
+                            if slot.current_coord == Some(result.coord) {
+                                slot.pixels = result.pixels;
+                                slot.elements = result.elements;
+                                gpu_manager.update_tile(physical_id, slot.pixels.as_ref());
                             }
                         }
                     }
 
+                    // 2. Update Camera View
                     let view_width = gpu_manager.size.width as f32 / zoom;
                     let view_height = gpu_manager.size.height as f32 / zoom;
-                    
+
                     let top_left_cam = Vec2::new(
                         camera_pos.x - view_width / 2.0,
-                        camera_pos.y - view_height / 2.0
+                        camera_pos.y - view_height / 2.0,
                     );
 
                     gpu_manager.update_camera(top_left_cam, zoom);
+
+                    // 3. Update Chunk Visibility
                     let commands = chunk_manager.update(camera_pos, gpu_manager.size, zoom);
-                    
+
                     for command in commands {
                         match command {
-                            ChunkCommand::UploadToGpu { physical_id, coord, data } => {
-                                pending_uploads.insert(coord, (physical_id as u32, data));
+                            ChunkCommand::UploadToGpu {
+                                physical_id: _,
+                                coord,
+                            } => {
                                 tx_req.send(ChunkRequest { coord }).unwrap();
                             }
-                            ChunkCommand::EvictedFromGpu { coord, data } => {
-                                pending_uploads.remove(&coord);
-                                save_chunk_to_disk(coord, &*data);
-                                chunk_manager.release_chunk(coord);
+                            ChunkCommand::EvictedFromGpu { .. } => {
+                                // Eviction is handled implicitly by the physical slot being overwritten
                             }
                         }
                     }
 
+                    // 4. Handle Brush/Drawing logic
                     if is_drawing {
-                        let diffs = handle_drawing(
-                            &mut chunk_manager, 
-                            &gpu_manager, 
-                            mouse_pos, 
-                            top_left_cam, 
-                            zoom
+                        handle_drawing(
+                            &mut chunk_manager,
+                            mouse_pos,
+                            top_left_cam,
+                            zoom,
+                            place_material,
+                            &mut accumulated_diffs,
+                            world.tick,
+                            last_render_tick,
                         );
-                        if !diffs.is_empty() {
-                            gpu_manager.apply_diffs(&diffs);
-                        }
                     }
 
+                    // 5. Render to Screen
                     let instances = chunk_manager.get_instances();
                     gpu_manager.upload_instances(&instances);
-                    
-                    match gpu_manager.render(instances.len() as u32) {
-                        Ok(_) => {}
+
+                    if accumulated_diffs.len() >= 65536 {
+                        log::warn!(
+                            "Too many diffs ({}), truncating to 65535 to prevent panic",
+                            accumulated_diffs.len()
+                        );
+                        accumulated_diffs.truncate(65535);
+                    }
+
+                    match gpu_manager.render(instances.len() as u32, &accumulated_diffs) {
+                        Ok(_) => {
+                            accumulated_diffs.clear();
+                            last_render_tick = world.tick;
+                        }
                         Err(wgpu::SurfaceError::Lost) => gpu_manager.resize(gpu_manager.size),
                         Err(wgpu::SurfaceError::OutOfMemory) => target.exit(),
                         Err(e) => eprintln!("{:?}", e),
@@ -200,6 +277,18 @@ fn main() {
                 _ => {}
             },
             Event::AboutToWait => {
+                let now = std::time::Instant::now();
+                while now.duration_since(last_tick_time) >= tick_rate {
+                    last_tick_time += tick_rate;
+                    world.simulate_step(
+                        &mut chunk_manager,
+                        camera_pos,
+                        gpu_manager.size,
+                        zoom,
+                        &mut accumulated_diffs,
+                        last_render_tick,
+                    );
+                }
                 window.request_redraw();
             }
             _ => {}
@@ -207,104 +296,85 @@ fn main() {
     });
 }
 
-fn get_chunk_path(coord: ChunkCoord) -> std::path::PathBuf {
-    Path::new(DATA_DIR).join(format!("chunk_{}_{}.bin", coord.x, coord.y))
-}
-
-fn load_chunk_from_disk(coord: ChunkCoord, buffer: &mut [u8]) -> bool {
-    let path = get_chunk_path(coord);
-    if path.exists() {
-        if let Ok(mut file) = File::open(path) {
-            if file.read_exact(buffer).is_ok() {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn save_chunk_to_disk(coord: ChunkCoord, data: &[u8]) {
-    let path = get_chunk_path(coord);
-    if let Ok(mut file) = File::create(path) {
-        let _ = file.write_all(data);
-    }
-}
-
-fn generate_procedural_chunk(coord: ChunkCoord, buffer: &mut [u8]) {
+fn generate_procedural_chunk(coord: ChunkCoord, pixels: &mut [u8], elements: &mut [Element]) {
     for y in 0..TILE_SIZE as i32 {
+        let world_y = (coord.y * TILE_SIZE as i32) + y;
+        let v2 = (world_y as f32 * 0.02).cos();
+
         for x in 0..TILE_SIZE as i32 {
             let world_x = (coord.x * TILE_SIZE as i32) + x;
-            let world_y = (coord.y * TILE_SIZE as i32) + y;
 
-            let v1 = (world_x as f32 * 0.01).sin();
-            let v2 = (world_y as f32 * 0.01).cos();
-            let v3 = ((world_x as f32 * 0.005) + (world_y as f32 * 0.005)).sin();
+            let v1 = (world_x as f32 * 0.02).sin();
+            let v3 = ((world_x as f32 * 0.01) + (world_y as f32 * 0.01)).sin();
 
-            let val = ((v1 + v2 + v3) / 3.0 * 127.0 + 128.0) as u8;
+            let val = (v1 + v2 + v3) / 3.0;
 
-            let idx = ((y * TILE_SIZE as i32 + x) * 4) as usize;
-            buffer[idx] = val;         
-            buffer[idx + 1] = val;     
-            buffer[idx + 2] = val / 2; 
-            buffer[idx + 3] = 255;     
+            let mut el = Element::empty();
+
+            if val > 0.85 {
+                el.material = CellType::Sand;
+                el.rgb = [200, 200, 50];
+            } else if val > 0.75 {
+                el.material = CellType::Brick;
+                el.rgb = [150, 50, 50];
+            }
+
+            let idx = (y * TILE_SIZE as i32 + x) as usize;
+            elements[idx] = el;
+
+            let p_idx = idx * 4;
+            pixels[p_idx] = el.rgb[0];
+            pixels[p_idx + 1] = el.rgb[1];
+            pixels[p_idx + 2] = el.rgb[2];
+            pixels[p_idx + 3] = if matches!(el.material, CellType::Air) {
+                0
+            } else {
+                255
+            };
         }
     }
 }
 
 fn handle_drawing(
-    chunk_manager: &mut ChunkManager, 
-    _gpu_manager: &GpuScreenManager,
+    chunk_manager: &mut ChunkManager,
     mouse_pos: PhysicalPosition<f64>,
-    top_left_camera: Vec2, 
-    zoom: f32
-) -> Vec<PixelDiff> {
-    let mut diffs = Vec::new();
-
+    top_left_camera: Vec2,
+    zoom: f32,
+    place_material: CellType,
+    diffs: &mut Vec<PixelDiff>,
+    current_time: u32,
+    last_render_tick: u32,
+) {
     let world_x = top_left_camera.x + (mouse_pos.x as f32 / zoom);
     let world_y = top_left_camera.y + (mouse_pos.y as f32 / zoom);
 
-    let chunk_x = (world_x / TILE_SIZE as f32).floor() as i32;
-    let chunk_y = (world_y / TILE_SIZE as f32).floor() as i32;
-    let coord = ChunkCoord { x: chunk_x, y: chunk_y };
+    let base_x = world_x as i32;
+    let base_y = world_y as i32;
 
-    let local_x = (world_x as i32).rem_euclid(TILE_SIZE as i32);
-    let local_y = (world_y as i32).rem_euclid(TILE_SIZE as i32);
-
-    if let Some(chunk_data_arc) = chunk_manager.cpu_backed_buffer.get(&coord) {
-        if let Some(&texture_id) = chunk_manager.active_mapping.get(&coord) {
-            
-            let data = unsafe { 
-                let ptr = chunk_data_arc.as_ptr() as *mut u8;
-                std::slice::from_raw_parts_mut(ptr, CHUNK_BYTE_SIZE) 
-            };
-
-            let brush_size = 5;
-            for dy in -brush_size..=brush_size {
-                for dx in -brush_size..=brush_size {
-                    if dx*dx + dy*dy > brush_size*brush_size { continue; }
-
-                    let lx = local_x + dx;
-                    let ly = local_y + dy;
-
-                    if lx >= 0 && lx < TILE_SIZE as i32 && ly >= 0 && ly < TILE_SIZE as i32 {
-                        let idx = ((ly * TILE_SIZE as i32 + lx) * 4) as usize;
-                        
-                        data[idx] = 255;
-                        data[idx+1] = 0;
-                        data[idx+2] = 0;
-                        data[idx+3] = 255;
-
-                        diffs.push(PixelDiff {
-                            local_x: lx as u8,
-                            local_y: ly as u8,
-                            tile_id: texture_id,
-                            r: 255, g: 0, b: 0, _padding: 0,
-                        });
-                    }
-                }
+    let brush_size = 5;
+    for dy in -brush_size..=brush_size {
+        for dx in -brush_size..=brush_size {
+            if dx * dx + dy * dy > brush_size * brush_size {
+                continue;
             }
+
+            let mut el = Element::empty();
+            el.material = place_material;
+            if matches!(place_material, CellType::Sand) {
+                el.rgb = [200, 200, 50];
+            } else if matches!(place_material, CellType::Air) {
+                el.rgb = [0, 0, 0];
+            }
+
+            chunk_manager.set_element_with_diff(
+                base_x + dx,
+                base_y + dy,
+                el,
+                diffs,
+                current_time,
+                last_render_tick,
+            );
         }
     }
-
-    diffs
 }
+// displaced search ts up on the db

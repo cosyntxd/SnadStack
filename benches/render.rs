@@ -40,7 +40,7 @@ fn bench_chunk_logic(c: &mut Criterion) {
 
 fn bench_wgpu_operations(c: &mut Criterion) {
     let _ = env_logger::builder().is_test(true).filter_level(log::LevelFilter::Warn).try_init();
-    
+
     // Use an event loop that we can pump
     let mut event_loop = EventLoop::new().unwrap();
     let (gpu_manager, _window) = pollster::block_on(setup_gpu(&event_loop));
@@ -50,6 +50,8 @@ fn bench_wgpu_operations(c: &mut Criterion) {
     c.bench_function("gpu_texture_upload_256x256", |b| {
         b.iter(|| {
             gpu_manager.update_tile(black_box(0), black_box(&dummy_data));
+            // maybe stops oom when queuing writes
+            let _ = gpu_manager.device.poll(wgpu::PollType::Poll);
         })
     });
 }

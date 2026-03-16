@@ -20,7 +20,8 @@ pub struct PixelDiff {
     pub r: u8,
     pub g: u8,
     pub b: u8,
-    pub _padding: u16,
+    pub a: u8,
+    pub _padding: u8,
 }
 
 #[repr(C)]
@@ -28,7 +29,8 @@ pub struct PixelDiff {
 pub struct TileInstance {
     pub position: [f32; 2],
     pub _padding: [u8; 3],
-    pub texture_id: TextureId,}
+    pub texture_id: TextureId,
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -45,14 +47,6 @@ struct ComputeParams {
     _pad: [u32; 3],
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct ClearParams {
-    pub texture_index: TextureId,
-    pub _pad1: [u8; 3],
-    pub _pad2: [u32; 3],
-}
-
 const SHADER_SOURCE: &str = r#"
 struct CameraUniform { view_proj: mat4x4<f32>, screen_size: vec2<f32>, padding: vec2<f32> };
 @group(0) @binding(0) var<uniform> camera: CameraUniform;
@@ -64,12 +58,12 @@ struct VertexOutput { @builtin(position) clip_position: vec4<f32>, @location(0) 
 @vertex
 fn vs_main(model: VertexInput, instance: InstanceInput) -> VertexOutput {
     var out: VertexOutput;
-    let world_pos = instance.tile_world_pos + (model.position * 256.0); 
+    let world_pos = instance.tile_world_pos + (model.position * 256.0);
     out.clip_position = camera.view_proj * vec4<f32>(world_pos, 0.0, 1.0);
     out.uv = model.uv;
-    
+
     out.texture_index = instance.texture_raw >> 24u;
-    
+
     return out;
 }
 
@@ -93,7 +87,7 @@ struct Params { count: u32 };
 fn update_world(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
     if (index >= params.count) { return; }
-    
+
     let packed_data = input_diffs.diffs[index];
     let x = (packed_data.low) & 0xFFu;
     let y = (packed_data.low >> 8u) & 0xFFu;
@@ -101,20 +95,12 @@ fn update_world(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let r_u = (packed_data.low >> 24u) & 0xFFu;
     let g_u = (packed_data.high) & 0xFFu;
     let b_u = (packed_data.high >> 8u) & 0xFFu;
-    
-    let color = vec4<f32>(f32(r_u)/255.0, f32(g_u)/255.0, f32(b_u)/255.0, 1.0);
+    let a_u = (packed_data.high >> 16u) & 0xFFu;
+
+    let color = vec4<f32>(f32(r_u)/255.0, f32(g_u)/255.0, f32(b_u)/255.0, f32(a_u)/255.0);
     textureStore(world_textures, vec2<i32>(i32(x), i32(y)), i32(tile_id), color);
 }
-
-struct ClearParams { texture_index: u32 };
-@group(0) @binding(3) var<uniform> clear_params: ClearParams;
-
-@compute @workgroup_size(16, 16)
-fn clear_tile(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    textureStore(world_textures, vec2<i32>(i32(global_id.x), i32(global_id.y)), i32(clear_params.texture_index), vec4<f32>(0.0));
-}
 "#;
-
 
 pub struct GpuScreenManager {
     surface: wgpu::Surface<'static>,
@@ -127,15 +113,13 @@ pub struct GpuScreenManager {
 
     render_pipeline: wgpu::RenderPipeline,
     compute_pipeline: wgpu::ComputePipeline,
-    clear_pipeline: wgpu::ComputePipeline,
-
+    // Removed clear_pipeline
     vertex_buffer: wgpu::Buffer,
     instance_buffer: wgpu::Buffer,
     camera_buffer: wgpu::Buffer,
     diff_buffer: wgpu::Buffer,
     diff_params_buffer: wgpu::Buffer,
-    clear_params_buffer: wgpu::Buffer,
-
+    // Removed clear_params_buffer
     compute_bind_group: wgpu::BindGroup,
     camera_bind_group: wgpu::BindGroup,
     texture_bind_group: wgpu::BindGroup,
@@ -146,6 +130,19 @@ impl GpuScreenManager {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let surface = instance.create_surface(window).unwrap();
+        // 1. Enumerate all available adapters on the system
+        let mut selected_adapter = None;
+        for adapter in instance.enumerate_adapters(wgpu::Backends::all()) {
+            let info = adapter.get_info();
+            println!("{:?}", info);
+            // 2. Check for the NVIDIA vendor ID (0x10DE)
+            // You can also check the string: info.name.to_lowercase().contains("nvidia")
+            if info.vendor == 0x10DE {
+                selected_adapter = Some(adapter);
+                break;
+            }
+        }
+
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -170,10 +167,10 @@ impl GpuScreenManager {
             format: surface_caps.formats[0],
             width: size.width,
             height: size.height,
-            present_mode: wgpu::PresentMode::Immediate,
+            present_mode: surface_caps.present_modes[0],
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
-            desired_maximum_frame_latency: 2,
+            desired_maximum_frame_latency: 1,
         };
         surface.configure(&device, &config);
 
@@ -242,12 +239,7 @@ impl GpuScreenManager {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let clear_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Clear Params"),
-            size: mem::size_of::<ClearParams>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
@@ -338,16 +330,6 @@ impl GpuScreenManager {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
             ],
             label: Some("compute_layout"),
         });
@@ -365,10 +347,6 @@ impl GpuScreenManager {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: diff_params_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: clear_params_buffer.as_entire_binding(),
                 },
             ],
             label: Some("compute_bg"),
@@ -428,7 +406,7 @@ impl GpuScreenManager {
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -456,14 +434,6 @@ impl GpuScreenManager {
             compilation_options: Default::default(),
             cache: None,
         });
-        let clear_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Clear PL"),
-            layout: Some(&compute_pipeline_layout),
-            module: &shader,
-            entry_point: Some("clear_tile"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
 
         Self {
             surface,
@@ -474,13 +444,11 @@ impl GpuScreenManager {
             texture_array,
             render_pipeline,
             compute_pipeline,
-            clear_pipeline,
             vertex_buffer,
             instance_buffer,
             camera_buffer,
             diff_buffer,
             diff_params_buffer,
-            clear_params_buffer,
             compute_bind_group,
             camera_bind_group,
             texture_bind_group,
@@ -550,77 +518,43 @@ impl GpuScreenManager {
             },
         );
     }
-    // todo: purge
-    pub fn clear_chunks(&self, texture_indices: &[TextureId]) {
-        if texture_indices.is_empty() {
-            return;
-        }
 
-        for &idx in texture_indices {
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Clear Enc"),
-                });
-
-            let params = ClearParams {
-                texture_index: idx,
-                _pad1: [0; 3],
-                _pad2: [0; 3],
-            };
-            self.queue.write_buffer(
-                &self.clear_params_buffer,
-                0,
-                bytemuck::cast_slice(&[params]),
-            );
-
-            {
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
-                cpass.set_pipeline(&self.clear_pipeline);
-                cpass.set_bind_group(0, &self.compute_bind_group, &[]);
-                cpass.dispatch_workgroups(16, 16, 1);
-            }
-
-            self.queue.submit(Some(encoder.finish()));
-        }
-    }
-
-    pub fn apply_diffs(&mut self, diffs: &[PixelDiff]) {
-        let count = diffs.len();
-
-        assert!(count < MAX_DIFF_PER_FRAME);
-        if diffs.is_empty() {
-            return;
-        }
-        self.queue
-            .write_buffer(&self.diff_buffer, 0, bytemuck::cast_slice(&diffs[0..count]));
-        let params = ComputeParams {
-            count: count as u32,
-            _pad: [0; 3],
-        };
-        self.queue
-            .write_buffer(&self.diff_params_buffer, 0, bytemuck::cast_slice(&[params]));
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
-            cpass.set_pipeline(&self.compute_pipeline);
-            cpass.set_bind_group(0, &self.compute_bind_group, &[]);
-            cpass.dispatch_workgroups((count as u32 + 63) / 64, 1, 1);
-        }
-        self.queue.submit(Some(encoder.finish()));
-    }
-
-    pub fn render(&mut self, instance_count: u32) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(
+        &mut self,
+        instance_count: u32,
+        diffs: &[PixelDiff],
+    ) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let diff_count = diffs.len();
+        if diff_count > 0 {
+            assert!(diff_count < MAX_DIFF_PER_FRAME);
+            self.queue
+                .write_buffer(&self.diff_buffer, 0, bytemuck::cast_slice(diffs));
+            let params = ComputeParams {
+                count: diff_count as u32,
+                _pad: [0; 3],
+            };
+            self.queue
+                .write_buffer(&self.diff_params_buffer, 0, bytemuck::cast_slice(&[params]));
+        }
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+        // 1. Compute Pass
+        if diff_count > 0 {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            cpass.set_pipeline(&self.compute_pipeline);
+            cpass.set_bind_group(0, &self.compute_bind_group, &[]);
+            cpass.dispatch_workgroups((diff_count as u32 + 63) / 64, 1, 1);
+        }
+
+        // 2. Render Pass
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -649,6 +583,7 @@ impl GpuScreenManager {
             rpass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             rpass.draw(0..4, 0..instance_count);
         }
+
         self.queue.submit(Some(encoder.finish()));
         output.present();
         Ok(())
