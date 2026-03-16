@@ -294,7 +294,7 @@ impl PhysicsManager {
 
         let cx = (min_x + max_x) / 2.0;
         let cy = (min_y + max_y) / 2.0;
-=
+
         let local_hull: Vec<Vector> = hull_points
             .into_iter()
             .map(|pt| Vector::new(pt.x - cx, pt.y - cy))
