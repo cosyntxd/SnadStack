@@ -11,7 +11,7 @@ use sand_sim::render::{GpuScreenManager, TileInstance};
 async fn setup_gpu(event_loop: &EventLoop<()>) -> (GpuScreenManager, Arc<winit::window::Window>) {
     let window = Arc::new(
         WindowBuilder::new()
-            .with_visible(true) // MUST be visible on Windows to avoid present() blocking forever
+            .with_visible(false) // internet says must be true but idk
             .with_inner_size(winit::dpi::LogicalSize::new(800.0, 600.0))
             .build(event_loop)
             .unwrap(),
@@ -28,7 +28,6 @@ fn bench_chunk_logic(c: &mut Criterion) {
 
     c.bench_function("chunk_manager_update_logic", |b| {
         b.iter(|| {
-            // Benchmark the CPU visibility and command generation logic
             manager.update(
                 black_box(camera_pos),
                 black_box(screen_size),
@@ -41,9 +40,8 @@ fn bench_chunk_logic(c: &mut Criterion) {
 fn bench_wgpu_operations(c: &mut Criterion) {
     let _ = env_logger::builder().is_test(true).filter_level(log::LevelFilter::Warn).try_init();
 
-    // Use an event loop that we can pump
     let mut event_loop = EventLoop::new().unwrap();
-    let (gpu_manager, _window) = pollster::block_on(setup_gpu(&event_loop));
+    let (mut gpu_manager, _window) = pollster::block_on(setup_gpu(&event_loop));
 
     let dummy_data = [0u8; CHUNK_BYTE_SIZE];
 
@@ -54,6 +52,47 @@ fn bench_wgpu_operations(c: &mut Criterion) {
             let _ = gpu_manager.device.poll(wgpu::PollType::Poll);
         })
     });
+
+    let mut instances = Vec::new();
+    for i in 0..100 {
+        let mut random_data = [0u8; CHUNK_BYTE_SIZE];
+        for p in (0..random_data.len()).step_by(4) {
+            random_data[p] = (p.wrapping_add(i * 13) % 256) as u8;       // R
+            random_data[p + 1] = (p.wrapping_add(i * 17) % 256) as u8;   // G
+            random_data[p + 2] = (p.wrapping_add(i * 19) % 256) as u8;   // B
+            random_data[p + 3] = 255;                                    // A
+        }
+        gpu_manager.update_tile(i as u8, &random_data);
+
+        instances.push(TileInstance {
+            position: [(i % 10) as f32 * 256.0, (i / 10) as f32 * 256.0],
+            _padding: [0; 3],
+            texture_id: i as u8,
+        });
+    }
+
+    let mut group = c.benchmark_group("rendering");
+    // group.sample_size(10); // Rendering is heavy, fewer samples is fine
+
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    use winit::platform::pump_events::EventLoopExtPumpEvents;
+
+    group.bench_function("render_100_random_tiles_in_view", |b| {
+        b.iter(|| {
+            #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+            let _ = event_loop.pump_events(Some(std::time::Duration::ZERO), |_, _| {});
+
+            gpu_manager.update_camera(Vec2::ZERO, 1.0);
+            gpu_manager.upload_instances(&instances);
+            match gpu_manager.render(instances.len() as u32, &[]) {
+                Ok(_) => {}
+                Err(wgpu::SurfaceError::Lost) => gpu_manager.resize(gpu_manager.size),
+                Err(e) => log::error!("Render error: {:?}", e),
+            }
+            let _ = gpu_manager.device.poll(wgpu::PollType::Poll);
+        })
+    });
+    group.finish();
 }
 
 criterion_group!(

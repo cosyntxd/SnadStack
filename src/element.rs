@@ -11,7 +11,7 @@ pub enum CellType {
     Water,
     Brick,
 }
-
+// todo: using a lot of memory
 #[derive(Clone, Copy, Debug)]
 pub struct Element {
     // visual

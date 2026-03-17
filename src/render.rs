@@ -132,7 +132,7 @@ impl GpuScreenManager {
         let surface = instance.create_surface(window).unwrap();
         // 1. Enumerate all available adapters on the system
         let mut selected_adapter = None;
-        for adapter in instance.enumerate_adapters(wgpu::Backends::all()) {
+        for adapter in instance.enumerate_adapters(wgpu::Backends::all()).await {
             let info = adapter.get_info();
             println!("{:?}", info);
             // 2. Check for the NVIDIA vendor ID (0x10DE)
@@ -162,12 +162,18 @@ impl GpuScreenManager {
             .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
+        let present_mode = if surface_caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
+            wgpu::PresentMode::Mailbox
+        } else {
+            surface_caps.present_modes[0]
+        };
+
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_caps.formats[0],
             width: size.width,
             height: size.height,
-            present_mode: surface_caps.present_modes[0],
+            present_mode,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 1,
@@ -356,7 +362,8 @@ impl GpuScreenManager {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Layout"),
                 bind_group_layouts: &[&camera_layout, &texture_layout],
-                push_constant_ranges: &[],
+                immediate_size: 0,
+
             });
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render PL"),
@@ -416,7 +423,7 @@ impl GpuScreenManager {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -424,7 +431,8 @@ impl GpuScreenManager {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Compute Layout"),
                 bind_group_layouts: &[&compute_layout],
-                push_constant_ranges: &[],
+                immediate_size: 0,
+
             });
         let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Compute PL"),
@@ -523,7 +531,7 @@ impl GpuScreenManager {
         &mut self,
         instance_count: u32,
         diffs: &[PixelDiff],
-    ) -> Result<(), wgpu::SurfaceError> {
+    ) -> Result<wgpu::SubmissionIndex, wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
@@ -575,6 +583,7 @@ impl GpuScreenManager {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             rpass.set_pipeline(&self.render_pipeline);
             rpass.set_bind_group(0, &self.camera_bind_group, &[]);
@@ -584,8 +593,8 @@ impl GpuScreenManager {
             rpass.draw(0..4, 0..instance_count);
         }
 
-        self.queue.submit(Some(encoder.finish()));
+        let submission = self.queue.submit(Some(encoder.finish()));
         output.present();
-        Ok(())
+        Ok(submission)
     }
 }
