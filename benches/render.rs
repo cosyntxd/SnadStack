@@ -45,11 +45,18 @@ fn bench_wgpu_operations(c: &mut Criterion) {
 
     let dummy_data = [0u8; CHUNK_BYTE_SIZE];
 
+    let mut upload_submissions = std::collections::VecDeque::new();
     c.bench_function("gpu_texture_upload_256x256", |b| {
         b.iter(|| {
             gpu_manager.update_tile(black_box(0), black_box(&dummy_data));
-            // maybe stops oom when queuing writes
-            let _ = gpu_manager.device.poll(wgpu::PollType::Poll);
+            let idx = gpu_manager.queue.submit([]);
+            upload_submissions.push_back(idx);
+            if upload_submissions.len() > 3 {
+                let old_idx = upload_submissions.pop_front().unwrap();
+                let _ = gpu_manager.device.poll(wgpu::PollType::Wait { submission_index: Some(old_idx), timeout: None });
+            } else {
+                let _ = gpu_manager.device.poll(wgpu::PollType::Poll);
+            }
         })
     });
 
@@ -77,6 +84,7 @@ fn bench_wgpu_operations(c: &mut Criterion) {
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     use winit::platform::pump_events::EventLoopExtPumpEvents;
 
+    let mut render_submissions = std::collections::VecDeque::new();
     group.bench_function("render_100_random_tiles_in_view", |b| {
         b.iter(|| {
             #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
@@ -84,12 +92,26 @@ fn bench_wgpu_operations(c: &mut Criterion) {
 
             gpu_manager.update_camera(Vec2::ZERO, 1.0);
             gpu_manager.upload_instances(&instances);
-            match gpu_manager.render(instances.len() as u32, &[]) {
-                Ok(_) => {}
-                Err(wgpu::SurfaceError::Lost) => gpu_manager.resize(gpu_manager.size),
-                Err(e) => log::error!("Render error: {:?}", e),
+            let idx = match gpu_manager.render(instances.len() as u32, &[]) {
+                Ok(idx) => Some(idx),
+                Err(wgpu::SurfaceError::Lost) => {
+                    gpu_manager.resize(gpu_manager.size);
+                    None
+                }
+                Err(e) => {
+                    log::error!("Render error: {:?}", e);
+                    None
+                }
+            };
+            if let Some(idx) = idx {
+                render_submissions.push_back(idx);
+                if render_submissions.len() > 3 {
+                    let old_idx = render_submissions.pop_front().unwrap();
+                    let _ = gpu_manager.device.poll(wgpu::PollType::Wait { submission_index: Some(old_idx), timeout: None });
+                } else {
+                    let _ = gpu_manager.device.poll(wgpu::PollType::Poll);
+                }
             }
-            let _ = gpu_manager.device.poll(wgpu::PollType::Poll);
         })
     });
     group.finish();
@@ -97,7 +119,7 @@ fn bench_wgpu_operations(c: &mut Criterion) {
 
 criterion_group!(
     name = benches;
-    config = Criterion::default().significance_level(0.1).sample_size(50);
+    config = Criterion::default().significance_level(0.1).sample_size(150);
     targets = bench_wgpu_operations, bench_chunk_logic
 );
 criterion_main!(benches);

@@ -1,7 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3};
 use std::{mem, sync::Arc};
-use wgpu::util::DeviceExt;
+use wgpu::{BlendState, util::DeviceExt};
 use winit::{dpi::PhysicalSize, window::Window};
 
 pub const TILE_SIZE: u32 = 256;
@@ -105,7 +105,7 @@ fn update_world(@builtin(global_invocation_id) global_id: vec3<u32>) {
 pub struct GpuScreenManager {
     surface: wgpu::Surface<'static>,
     pub device: wgpu::Device,
-    queue: wgpu::Queue,
+    pub queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     pub size: PhysicalSize<u32>,
 
@@ -162,8 +162,8 @@ impl GpuScreenManager {
             .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
-        let present_mode = if surface_caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
-            wgpu::PresentMode::Mailbox
+        let present_mode = if surface_caps.present_modes.contains(&wgpu::PresentMode::Immediate) {
+            wgpu::PresentMode::Immediate
         } else {
             surface_caps.present_modes[0]
         };
@@ -176,7 +176,7 @@ impl GpuScreenManager {
             present_mode,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
-            desired_maximum_frame_latency: 1,
+            desired_maximum_frame_latency: 3, // Allow the CPU to run 1 frame ahead of the GPU
         };
         surface.configure(&device, &config);
 
@@ -413,7 +413,8 @@ impl GpuScreenManager {
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    blend: Some(BlendState::ALPHA_BLENDING),
+                    // blend: None, // idk if alpha is needed
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
