@@ -78,7 +78,7 @@ impl ChunkManager {
     ) -> Vec<ChunkCommand> {
         self.frame_counter += 1;
 
-        let pad = 2;
+        let pad = 1;
         let view_w = (screen_size.width as f32 / zoom) * 0.5;
         let view_h = (screen_size.height as f32 / zoom) * 0.5;
 
@@ -100,7 +100,7 @@ impl ChunkManager {
                 MAX_PHYSICAL_TEXTURES
             );
 
-            // Clamp to a safe square around the camera center
+            // something has gone terribly wrong but make it look reasonable
             let safe_radius = ((MAX_PHYSICAL_TEXTURES as f32).sqrt() / 2.0).floor() as i32 - 1;
             let center_cx = (camera_pos.x / TILE_SIZE as f32).floor() as i32;
             let center_cy = (camera_pos.y / TILE_SIZE as f32).floor() as i32;
@@ -112,11 +112,8 @@ impl ChunkManager {
         }
 
         let mut commands = Vec::new();
-        let mut needed_coords = Vec::with_capacity(16);
+        let mut newly_visible = Vec::with_capacity(128);
         self.visible_chunks.clear();
-
-        // Mark all currently active chunks as out-of-bounds. We'll unmark them if they are still visible.
-        let mut to_evict: Vec<ChunkCoord> = self.active_mapping.keys().cloned().collect();
 
         for y in min_cy..=max_cy {
             for x in min_cx..=max_cx {
@@ -125,28 +122,24 @@ impl ChunkManager {
 
                 if let Some(&id) = self.active_mapping.get(&coord) {
                     self.physical_slots[id as usize].last_visible_frame = self.frame_counter;
-                    if let Some(pos) = to_evict.iter().position(|&c| c == coord) {
-                        to_evict.swap_remove(pos);
-                    }
                 } else {
-                    needed_coords.push(coord);
+                    newly_visible.push(coord);
                 }
             }
         }
 
-        // Explicitly evict chunks that are no longer visible so we free up PhysicalSlots immediately
-        for evict_coord in to_evict {
-            if let Some(id) = self.active_mapping.remove(&evict_coord) {
-                self.physical_slots[id as usize].is_empty = true;
-                commands.push(ChunkCommand::EvictedFromGpu { coord: evict_coord });
+        self.active_mapping.retain(|&coord, &mut id| {
+            let slot = &mut self.physical_slots[id as usize];
+            if slot.last_visible_frame < self.frame_counter {
+                slot.is_empty = true;
+                commands.push(ChunkCommand::EvictedFromGpu { coord });
+                false
+            } else {
+                true
             }
-        }
+        });
 
-        if needed_coords.is_empty() {
-            return commands;
-        }
-
-        for coord in needed_coords {
+        for coord in newly_visible {
             let slot_id = self.find_best_slot();
 
             let slot = &mut self.physical_slots[slot_id as usize];
@@ -155,6 +148,7 @@ impl ChunkManager {
                 let old_coord = slot.current_coord.unwrap();
                 commands.push(ChunkCommand::EvictedFromGpu { coord: old_coord });
                 self.active_mapping.remove(&old_coord);
+                log::info!("Is this ever hit")
             }
 
             slot.current_coord = Some(coord);
@@ -206,8 +200,8 @@ impl ChunkManager {
 
     #[inline]
     pub fn get_element(&self, world_x: i32, world_y: i32) -> Option<Element> {
-        let chunk_x = world_x.div_euclid(TILE_SIZE as i32);
-        let chunk_y = world_y.div_euclid(TILE_SIZE as i32);
+        let chunk_x = world_x >> 8;
+        let chunk_y = world_y >> 8;
         let coord = ChunkCoord {
             x: chunk_x,
             y: chunk_y,
@@ -216,23 +210,23 @@ impl ChunkManager {
         if let Some(&slot_id) = self.active_mapping.get(&coord) {
             let slot = &self.physical_slots[slot_id as usize];
             if slot.current_coord == Some(coord) {
-                let local_x = world_x.rem_euclid(TILE_SIZE as i32) as usize;
-                let local_y = world_y.rem_euclid(TILE_SIZE as i32) as usize;
+                let local_x = (world_x & 255) as usize;
+                let local_y = (world_y & 255) as usize;
                 return Some(slot.elements[local_y * TILE_SIZE as usize + local_x]);
             }
         }
         None
     }
 
-    #[inline]
+    #[inline(never)]
     pub fn set_element(
         &mut self,
         world_x: i32,
         world_y: i32,
         element: Element,
     ) -> Option<(TextureId, u8, u8)> {
-        let chunk_x = world_x.div_euclid(TILE_SIZE as i32);
-        let chunk_y = world_y.div_euclid(TILE_SIZE as i32);
+        let chunk_x = world_x >> 8;
+        let chunk_y = world_y >> 8;
         let coord = ChunkCoord {
             x: chunk_x,
             y: chunk_y,
@@ -241,23 +235,18 @@ impl ChunkManager {
         if let Some(&slot_id) = self.active_mapping.get(&coord) {
             let slot = &mut self.physical_slots[slot_id as usize];
             if slot.current_coord == Some(coord) {
-                let local_x = world_x.rem_euclid(TILE_SIZE as i32) as usize;
-                let local_y = world_y.rem_euclid(TILE_SIZE as i32) as usize;
+                let local_x = (world_x & 255) as usize;
+                let local_y = (world_y & 255) as usize;
 
                 slot.elements[local_y * TILE_SIZE as usize + local_x] = element;
 
                 let idx = (local_y * TILE_SIZE as usize + local_x) * 4;
-                if matches!(element.material, crate::element::CellType::Air) {
-                    slot.pixels[idx] = 0;
-                    slot.pixels[idx + 1] = 0;
-                    slot.pixels[idx + 2] = 0;
-                    slot.pixels[idx + 3] = 0;
-                } else {
-                    slot.pixels[idx] = element.rgb[0];
-                    slot.pixels[idx + 1] = element.rgb[1];
-                    slot.pixels[idx + 2] = element.rgb[2];
-                    slot.pixels[idx + 3] = 255;
-                }
+
+
+                slot.pixels[idx] = element.rgb[0];
+                slot.pixels[idx + 1] = element.rgb[1];
+                slot.pixels[idx + 2] = element.rgb[2];
+                slot.pixels[idx + 3] = 255;
 
                 return Some((slot_id, local_x as u8, local_y as u8));
             }
@@ -343,7 +332,6 @@ impl ChunkManager {
         let view_w = (screen_size.width as f32 / zoom) * 0.5;
         let view_h = (screen_size.height as f32 / zoom) * 0.5;
 
-        // No pad here, true strict view bounds
         let min_cx = ((camera_pos.x - view_w) / TILE_SIZE as f32).floor() as i32;
         let max_cx = ((camera_pos.x + view_w) / TILE_SIZE as f32).floor() as i32;
         let min_cy = ((camera_pos.y - view_h) / TILE_SIZE as f32).floor() as i32;
