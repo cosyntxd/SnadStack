@@ -1,8 +1,33 @@
+use crate::bodies::PhysicsManager;
 use crate::chunks::ChunkManager;
 use crate::element::CellType;
 use crate::render::{PixelDiff, TILE_SIZE};
 use glam::Vec2;
 use winit::dpi::PhysicalSize;
+
+pub struct WorldState {
+    chunks: ChunkManager,
+    physics: PhysicsManager,
+    queued_pixels: Vec<PixelDiff>,
+    ticks: u32,
+    camera_pos: Vec2,
+    screen_size: PhysicalSize<u32>,
+    zoom: f32,
+}
+impl WorldState {
+    pub fn new() -> Self {
+        Self {
+            chunks: ChunkManager::new(),
+            physics: PhysicsManager::new(),
+            queued_pixels: Vec::new(),
+            ticks: 0,
+            camera_pos: Vec2::ZERO,
+            screen_size: PhysicalSize::new(0, 0),
+            zoom: 1.0,
+        }
+    }
+
+}
 
 pub struct CompleteWorld {
     pub tick: u32,
