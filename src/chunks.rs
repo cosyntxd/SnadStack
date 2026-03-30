@@ -1,7 +1,9 @@
 use glam::Vec2;
+use rapier2d::math::Vector;
 use rustc_hash::FxHashMap;
 use winit::dpi::PhysicalSize;
 
+use crate::bodies::SimulatableBody;
 use crate::element::Element;
 use crate::render::{PixelDiff, TextureId, TileInstance, MAX_PHYSICAL_TEXTURES, TILE_SIZE};
 
@@ -14,6 +16,7 @@ pub struct ChunkCoord {
     pub y: i32,
 }
 
+
 #[derive(Clone)]
 pub struct PhysicalSlot {
     pub current_coord: Option<ChunkCoord>,
@@ -21,6 +24,8 @@ pub struct PhysicalSlot {
     pub is_empty: bool,
     pub pixels: Box<[u8; CHUNK_BYTE_SIZE]>,
     pub elements: Box<[Element; CHUNK_ELEMENTS]>,
+    pub vertices: Vec<Vector>,
+    pub last_updated_verts: u32,
 }
 
 impl Default for PhysicalSlot {
@@ -37,6 +42,8 @@ impl Default for PhysicalSlot {
                 .into_boxed_slice()
                 .try_into()
                 .unwrap(),
+            vertices: Vec::new(),
+            last_updated_verts: 0,
         }
     }
 }
@@ -320,6 +327,18 @@ impl ChunkManager {
 
         self.set_element_with_diff(x1, y1, e2, diffs, current_time, last_render_tick);
         self.set_element_with_diff(x2, y2, e1, diffs, current_time, last_render_tick);
+    }
+
+    pub fn update_vertices(&mut self, texture_id: TextureId, current_time: u32) {
+        let slot = &mut self.physical_slots[texture_id as usize];
+        if slot.last_updated_verts < current_time {
+            slot.vertices = SimulatableBody::compute_convex_hull(
+                TILE_SIZE as usize,
+                TILE_SIZE as usize,
+                slot.elements.as_ref(),
+            );
+            slot.last_updated_verts = current_time;
+        }
     }
 
     pub fn is_in_view(

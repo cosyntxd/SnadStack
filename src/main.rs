@@ -78,10 +78,7 @@ fn main() {
     );
 
     let mut gpu_manager = pollster::block_on(GpuScreenManager::new(window.clone()));
-    let mut chunk_manager = ChunkManager::new();
-
-    let mut camera_pos = Vec2::ZERO;
-    let mut zoom = 10.0;
+    let mut world = world::World::new();
 
     let mut mouse_pos = PhysicalPosition::new(0.0, 0.0);
     let mut is_drawing = false;
@@ -94,10 +91,6 @@ fn main() {
 
     let mut last_tick_time = std::time::Instant::now();
     let tick_rate = std::time::Duration::from_secs_f64(1.0 / 50.0);
-    let mut world = world::CompleteWorld::new();
-
-    let mut accumulated_diffs = Vec::new();
-    let mut last_render_tick = 0;
 
     event_loop.run(move |event, target| {
         target.set_control_flow(ControlFlow::Poll);
@@ -108,6 +101,7 @@ fn main() {
 
                 WindowEvent::Resized(new_size) => {
                     gpu_manager.resize(new_size);
+                    world.screen_size = new_size;
                 }
 
                 WindowEvent::CursorMoved { position, .. } => {
@@ -117,8 +111,8 @@ fn main() {
                         let dx = position.x - last_mouse_pos.x;
                         let dy = position.y - last_mouse_pos.y;
 
-                        camera_pos.x -= dx as f32 / zoom;
-                        camera_pos.y -= dy as f32 / zoom;
+                        world.camera_pos.x -= dx as f32 / world.zoom;
+                        world.camera_pos.y -= dy as f32 / world.zoom;
                     }
 
                     last_mouse_pos = position;
@@ -146,12 +140,12 @@ fn main() {
                 WindowEvent::KeyboardInput { event, .. } => {
                     if event.state == ElementState::Pressed {
                         if let PhysicalKey::Code(KeyCode::KeyB) = event.physical_key {
-                            let world_x = camera_pos.x
-                                - ((gpu_manager.size.width as f32 / zoom) * 0.5)
-                                + (mouse_pos.x as f32 / zoom);
-                            let world_y = camera_pos.y
-                                - ((gpu_manager.size.height as f32 / zoom) * 0.5)
-                                + (mouse_pos.y as f32 / zoom);
+                            let world_x = world.camera_pos.x
+                                - ((gpu_manager.size.width as f32 / world.zoom) * 0.5)
+                                + (mouse_pos.x as f32 / world.zoom);
+                            let world_y = world.camera_pos.y
+                                - ((gpu_manager.size.height as f32 / world.zoom) * 0.5)
+                                + (mouse_pos.y as f32 / world.zoom);
                             let base_x = world_x as i32;
                             let base_y = world_y as i32;
 
@@ -160,13 +154,13 @@ fn main() {
                                     let mut el = Element::empty();
                                     el.material = CellType::Brick;
                                     el.rgb = [180, 40, 40];
-                                    chunk_manager.set_element_with_diff(
+                                    world.chunks.set_element_with_diff(
                                         base_x + x,
                                         base_y + y,
                                         el,
-                                        &mut accumulated_diffs,
-                                        world.tick,
-                                        last_render_tick,
+                                        &mut world.queued_pixels,
+                                        world.ticks,
+                                        world.last_render_tick,
                                     );
                                 }
                             }
@@ -181,19 +175,19 @@ fn main() {
                     };
 
                     let zoom_sensitivity = 0.1;
-                    let target_zoom = zoom * (1.0 + scroll_y * zoom_sensitivity);
+                    let target_zoom = world.zoom * (1.0 + scroll_y * zoom_sensitivity);
                     let min_zoom = gpu_manager.size.width as f32 / 4300.0;
                     let max_zoom = 4.0;
 
-                    zoom = target_zoom.clamp(min_zoom, max_zoom);
+                    world.zoom = target_zoom.clamp(min_zoom, max_zoom);
                 }
 
                 WindowEvent::RedrawRequested => {
                     // 1. Process Loaded Chunks
                     while let Ok(result) = rx_res.try_recv() {
-                        if let Some(&physical_id) = chunk_manager.active_mapping.get(&result.coord)
+                        if let Some(&physical_id) = world.chunks.active_mapping.get(&result.coord)
                         {
-                            let slot = &mut chunk_manager.physical_slots[physical_id as usize];
+                            let slot = &mut world.chunks.physical_slots[physical_id as usize];
                             // Ensure the slot hasn't been reassigned to another coordinate while this one generated
                             if slot.current_coord == Some(result.coord) {
                                 slot.pixels = result.pixels;
@@ -204,18 +198,18 @@ fn main() {
                     }
 
                     // 2. Update Camera View
-                    let view_width = gpu_manager.size.width as f32 / zoom;
-                    let view_height = gpu_manager.size.height as f32 / zoom;
+                    let view_width = gpu_manager.size.width as f32 / world.zoom;
+                    let view_height = gpu_manager.size.height as f32 / world.zoom;
 
                     let top_left_cam = Vec2::new(
-                        camera_pos.x - view_width / 2.0,
-                        camera_pos.y - view_height / 2.0,
+                        world.camera_pos.x - view_width / 2.0,
+                        world.camera_pos.y - view_height / 2.0,
                     );
 
-                    gpu_manager.update_camera(top_left_cam, zoom);
+                    gpu_manager.update_camera(top_left_cam, world.zoom);
 
                     // 3. Update Chunk Visibility
-                    let commands = chunk_manager.update(camera_pos, gpu_manager.size, zoom);
+                    let commands = world.chunks.update(world.camera_pos, gpu_manager.size, world.zoom);
 
                     for command in commands {
                         match command {
@@ -234,33 +228,29 @@ fn main() {
                     // 4. Handle Brush/Drawing logic
                     if is_drawing {
                         handle_drawing(
-                            &mut chunk_manager,
+                            &mut world,
                             mouse_pos,
                             top_left_cam,
-                            zoom,
                             place_material,
-                            &mut accumulated_diffs,
-                            world.tick,
-                            last_render_tick,
                         );
                     }
 
                     // 5. Render to Screen
-                    let instances = chunk_manager.get_instances();
+                    let instances = world.chunks.get_instances();
                     gpu_manager.upload_instances(&instances);
 
-                    if accumulated_diffs.len() >= 65536 {
+                    if world.queued_pixels.len() >= 65536 {
                         log::warn!(
                             "Too many diffs ({}), truncating to 65535 to prevent panic",
-                            accumulated_diffs.len()
+                            world.queued_pixels.len()
                         );
-                        accumulated_diffs.truncate(65535);
+                        world.queued_pixels.truncate(65535);
                     }
 
-                    match gpu_manager.render(instances.len() as u32, &accumulated_diffs) {
+                    match gpu_manager.render(instances.len() as u32, &world.queued_pixels) {
                         Ok(_) => {
-                            accumulated_diffs.clear();
-                            last_render_tick = world.tick;
+                            world.queued_pixels.clear();
+                            world.last_render_tick = world.ticks;
                         }
                         Err(wgpu::SurfaceError::Lost) => gpu_manager.resize(gpu_manager.size),
                         Err(wgpu::SurfaceError::OutOfMemory) => target.exit(),
@@ -280,14 +270,7 @@ fn main() {
                 let now = std::time::Instant::now();
                 while now.duration_since(last_tick_time) >= tick_rate {
                     last_tick_time += tick_rate;
-                    world.simulate_step(
-                        &mut chunk_manager,
-                        camera_pos,
-                        gpu_manager.size,
-                        zoom,
-                        &mut accumulated_diffs,
-                        last_render_tick,
-                    );
+                    world.simulate_step();
                 }
                 window.request_redraw();
             }
@@ -336,17 +319,13 @@ fn generate_procedural_chunk(coord: ChunkCoord, pixels: &mut [u8], elements: &mu
 }
 
 fn handle_drawing(
-    chunk_manager: &mut ChunkManager,
+    world: &mut world::World,
     mouse_pos: PhysicalPosition<f64>,
     top_left_camera: Vec2,
-    zoom: f32,
     place_material: CellType,
-    diffs: &mut Vec<PixelDiff>,
-    current_time: u32,
-    last_render_tick: u32,
 ) {
-    let world_x = top_left_camera.x + (mouse_pos.x as f32 / zoom);
-    let world_y = top_left_camera.y + (mouse_pos.y as f32 / zoom);
+    let world_x = top_left_camera.x + (mouse_pos.x as f32 / world.zoom);
+    let world_y = top_left_camera.y + (mouse_pos.y as f32 / world.zoom);
 
     let base_x = world_x as i32;
     let base_y = world_y as i32;
@@ -366,13 +345,13 @@ fn handle_drawing(
                 el.rgb = [0, 0, 0];
             }
 
-            chunk_manager.set_element_with_diff(
+            world.chunks.set_element_with_diff(
                 base_x + dx,
                 base_y + dy,
                 el,
-                diffs,
-                current_time,
-                last_render_tick,
+                &mut world.queued_pixels,
+                world.ticks,
+                world.last_render_tick,
             );
         }
     }

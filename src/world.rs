@@ -1,66 +1,52 @@
 use crate::bodies::PhysicsManager;
 use crate::chunks::ChunkManager;
-use crate::element::CellType;
+use crate::element::{CellType, Element};
 use crate::render::{PixelDiff, TILE_SIZE};
 use glam::Vec2;
 use winit::dpi::PhysicalSize;
 
-pub struct WorldState {
-    chunks: ChunkManager,
-    physics: PhysicsManager,
-    queued_pixels: Vec<PixelDiff>,
-    ticks: u32,
-    camera_pos: Vec2,
-    screen_size: PhysicalSize<u32>,
-    zoom: f32,
+pub struct World {
+    pub chunks: ChunkManager,
+    pub physics: PhysicsManager,
+    pub queued_pixels: Vec<PixelDiff>,
+    pub ticks: u32,
+    pub last_render_tick: u32,
+    pub camera_pos: Vec2,
+    pub screen_size: PhysicalSize<u32>,
+    pub zoom: f32,
 }
-impl WorldState {
+
+impl World {
     pub fn new() -> Self {
         Self {
             chunks: ChunkManager::new(),
-            physics: PhysicsManager::new(),
+            physics: PhysicsManager::new(Vec2::new(0.0, -9.81)),
             queued_pixels: Vec::new(),
             ticks: 0,
+            last_render_tick: 0,
             camera_pos: Vec2::ZERO,
             screen_size: PhysicalSize::new(0, 0),
-            zoom: 1.0,
+            zoom: 10.0,
         }
     }
 
-}
+    pub fn simulate_step(&mut self) {
+        self.ticks = self.ticks.wrapping_add(1);
 
-pub struct CompleteWorld {
-    pub tick: u32,
-}
-
-impl CompleteWorld {
-    pub fn new() -> Self {
-        Self { tick: 0 }
-    }
-
-    pub fn simulate_step(
-        &mut self,
-        chunk_manager: &mut ChunkManager,
-        camera_pos: Vec2,
-        screen_size: PhysicalSize<u32>,
-        zoom: f32,
-        diffs: &mut Vec<PixelDiff>,
-        last_render_tick: u32,
-    ) {
-        self.tick = self.tick.wrapping_add(1);
-
-        let mut active_coords: Vec<_> = chunk_manager
+        let mut active_coords: Vec<_> = self
+            .chunks
             .visible_chunks
             .iter()
             .filter(|&&c| {
-                chunk_manager.is_in_view(c, camera_pos, screen_size, zoom)
-                    && chunk_manager.active_mapping.contains_key(&c)
+                self.chunks
+                    .is_in_view(c, self.camera_pos, self.screen_size, self.zoom)
+                    && self.chunks.active_mapping.contains_key(&c)
             })
             .cloned()
             .collect();
         active_coords.sort_by(|a, b| b.y.cmp(&a.y)); // process bottom chunks first
 
-        let is_even = self.tick % 2 == 0;
+        let is_even = self.ticks % 2 == 0;
 
         for coord in active_coords {
             let base_x = coord.x * TILE_SIZE as i32;
@@ -77,11 +63,11 @@ impl CompleteWorld {
                     let world_x = base_x + lx;
                     let world_y = base_y + ly;
 
-                    let Some(el) = chunk_manager.get_element(world_x, world_y) else {
+                    let Some(el) = self.chunks.get_element(world_x, world_y) else {
                         continue;
                     };
 
-                    if el.update_time == self.tick {
+                    if el.update_time == self.ticks {
                         continue;
                     }
                     if matches!(el.material, CellType::Air | CellType::Brick) {
@@ -98,7 +84,7 @@ impl CompleteWorld {
 
                         for (dx, dy) in options {
                             if let Some(target) =
-                                chunk_manager.get_element(world_x + dx, world_y + dy)
+                                self.chunks.get_element(world_x + dx, world_y + dy)
                             {
                                 if matches!(target.material, CellType::Air | CellType::Water) {
                                     target_x = world_x + dx;
@@ -111,14 +97,24 @@ impl CompleteWorld {
                     }
 
                     if moved {
-                        chunk_manager.swap_elements(
+                        let e1 = self.chunks.get_element(world_x, world_y).unwrap_or(Element::empty());
+                        let e2 = self.chunks.get_element(target_x, target_y).unwrap_or(Element::empty());
+
+                        self.chunks.set_element_with_diff(
                             world_x,
                             world_y,
+                            e2,
+                            &mut self.queued_pixels,
+                            self.ticks,
+                            self.last_render_tick,
+                        );
+                        self.chunks.set_element_with_diff(
                             target_x,
                             target_y,
-                            diffs,
-                            self.tick,
-                            last_render_tick,
+                            e1,
+                            &mut self.queued_pixels,
+                            self.ticks,
+                            self.last_render_tick,
                         );
                     }
                 }
