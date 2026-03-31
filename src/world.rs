@@ -29,7 +29,15 @@ impl World {
             zoom: 10.0,
         }
     }
-
+    pub fn frame_random(&self) -> u32 {
+        let mut state = self.ticks;
+        state ^= state >> 16;
+        state = state.wrapping_mul(0x85ebca6b);
+        state ^= state >> 13;
+        state = state.wrapping_mul(0xc2b2ae35);
+        state ^= state >> 16;
+        state
+    }
     pub fn simulate_step(&mut self) {
         self.ticks = self.ticks.wrapping_add(1);
 
