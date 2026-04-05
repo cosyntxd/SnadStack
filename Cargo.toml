@@ -26,7 +26,12 @@ glam = "0.30.9"
 rustc-hash = "2.1.1"
 pollster = "0.4"
 rapier2d = "0.32.0"
+bitfields = "1.0.3"
 
 [dev-dependencies]
 pollster = "0.4"
 criterion = { version = "0.5", features = ["async_tokio"] }
+
+# [profile.release]
+# lto = true
+# strip = "symbols"
