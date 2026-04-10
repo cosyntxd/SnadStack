@@ -130,3 +130,49 @@ impl World {
         }
     }
 }
+
+#[derive(Clone, Debug)]
+pub struct PixelQueue {
+    pub diffs: Vec<PixelDiff>,
+    pub compute_time_ms: u64,
+    pub tick: u64,
+}
+
+impl PixelQueue {
+    pub fn new() -> Self {
+        Self {
+            diffs: Vec::new(),
+            compute_time_ms: 0,
+            tick: 0,
+        }
+    }
+}
+
+pub struct DiffQueueManager {
+    pub cache: Vec<PixelQueue>,
+    pub render: PixelQueue,
+    pub completed: Vec<PixelQueue>,
+}
+
+impl DiffQueueManager {
+    pub fn new() -> Self {
+        Self {
+            cache: Vec::new(),
+            render: PixelQueue::new(),
+            completed: Vec::new(),
+        }
+    }
+
+    pub fn complete_simulation(&mut self) {
+        let next_render = self.cache.pop().unwrap_or_else(PixelQueue::new);
+        let old_render = std::mem::replace(&mut self.render, next_render);
+        self.completed.push(old_render);
+    }
+
+    pub fn complete_render(&mut self) {
+        for mut queue in self.completed.drain(..) {
+            queue.diffs.clear();
+            self.cache.push(queue);
+        }
+    }
+}
