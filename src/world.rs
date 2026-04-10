@@ -141,17 +141,15 @@ pub struct PixelQueue {
 impl PixelQueue {
     pub fn new() -> Self {
         Self {
-            diffs: Vec::new(),
-            compute_time_ms: 0,
-            tick: 0,
+
         }
     }
 }
 
 pub struct DiffQueueManager {
-    pub cache: Vec<PixelQueue>,
-    pub render: PixelQueue,
-    pub completed: Vec<PixelQueue>,
+    cache: Vec<PixelQueue>,
+    render: PixelQueue,
+    completed: Vec<PixelQueue>,
 }
 
 impl DiffQueueManager {
@@ -164,15 +162,23 @@ impl DiffQueueManager {
     }
 
     pub fn complete_simulation(&mut self) {
-        let next_render = self.cache.pop().unwrap_or_else(PixelQueue::new);
+        let next_render = self.cache.pop().unwrap_or_else(|| PixelQueue {
+            diffs: Vec::new(),
+            compute_time_ms: 0,
+            tick: 0,
+        });
         let old_render = std::mem::replace(&mut self.render, next_render);
         self.completed.push(old_render);
     }
 
-    pub fn complete_render(&mut self) {
+    pub fn complete_draw(&mut self) {
         for mut queue in self.completed.drain(..) {
             queue.diffs.clear();
             self.cache.push(queue);
         }
+    }
+
+    pub fn get_renderable(&self) -> &Vec<PixelQueue> {
+        &self.completed
     }
 }
