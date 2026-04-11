@@ -5,6 +5,12 @@ use crate::render::{PixelDiff, TILE_SIZE};
 use glam::Vec2;
 use winit::dpi::PhysicalSize;
 
+
+pub enum WorldUserActions {
+    ApplyPhysicsForce {  },
+    Place
+}
+
 pub struct World {
     pub chunks: ChunkManager,
     pub physics: PhysicsManager,
@@ -141,7 +147,9 @@ pub struct PixelQueue {
 impl PixelQueue {
     pub fn new() -> Self {
         Self {
-
+            diffs: Vec::new(),
+            compute_time_ms: 0,
+            tick: 0,
         }
     }
 }
@@ -162,11 +170,7 @@ impl DiffQueueManager {
     }
 
     pub fn complete_simulation(&mut self) {
-        let next_render = self.cache.pop().unwrap_or_else(|| PixelQueue {
-            diffs: Vec::new(),
-            compute_time_ms: 0,
-            tick: 0,
-        });
+        let next_render = self.cache.pop().unwrap_or_else(PixelQueue::new);
         let old_render = std::mem::replace(&mut self.render, next_render);
         self.completed.push(old_render);
     }
