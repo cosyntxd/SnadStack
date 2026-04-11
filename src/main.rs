@@ -7,10 +7,11 @@ mod world;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
-use chunks::{ChunkCommand, ChunkCoord, ChunkManager, CHUNK_BYTE_SIZE, CHUNK_ELEMENTS};
+use chunks::{ChunkCommand, ChunkCoord, CHUNK_BYTE_SIZE, CHUNK_ELEMENTS};
 use element::{CellType, Element};
 use glam::Vec2;
-use render::{GpuScreenManager, PixelDiff, TextureId, TILE_SIZE};
+use render::{GpuScreenManager, TILE_SIZE};
+use world::World;
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -78,7 +79,7 @@ fn main() {
     );
 
     let mut gpu_manager = pollster::block_on(GpuScreenManager::new(window.clone()));
-    let mut world = world::World::new();
+    let mut world = World::new();
 
     let mut mouse_pos = PhysicalPosition::new(0.0, 0.0);
     let mut is_drawing = false;
@@ -190,9 +191,8 @@ fn main() {
                             let slot = &mut world.chunks.physical_slots[physical_id as usize];
                             // Ensure the slot hasn't been reassigned to another coordinate while this one generated
                             if slot.current_coord == Some(result.coord) {
-                                slot.pixels = result.pixels;
                                 slot.elements = result.elements;
-                                gpu_manager.update_tile(physical_id, slot.pixels.as_ref());
+                                gpu_manager.update_tile(physical_id, result.pixels.as_ref());
                             }
                         }
                     }
@@ -239,22 +239,37 @@ fn main() {
                     let instances = world.chunks.get_instances();
                     gpu_manager.upload_instances(&instances);
 
-                    if world.queued_pixels.len() >= 65536 {
+                    let diff_count = world.queued_pixels.len();
+
+                    if diff_count >= 65536 {
                         log::warn!(
                             "Too many diffs ({}), truncating to 65535 to prevent panic",
-                            world.queued_pixels.len()
+                            diff_count
                         );
-                        world.queued_pixels.truncate(65535);
                     }
 
-                    match gpu_manager.render(instances.len() as u32, &world.queued_pixels) {
+                    let render_result = gpu_manager.render(
+                        instances.len() as u32,
+                        &world.queued_pixels[..diff_count.min(65535)],
+                    );
+
+                    if render_result.is_ok() {
+                        world.last_render_tick = world.ticks;
+                    }
+
+                    match render_result {
                         Ok(_) => {
                             world.queued_pixels.clear();
-                            world.last_render_tick = world.ticks;
                         }
-                        Err(wgpu::SurfaceError::Lost) => gpu_manager.resize(gpu_manager.size),
+                        Err(wgpu::SurfaceError::Lost) => {
+                            world.queued_pixels.clear();
+                            gpu_manager.resize(gpu_manager.size);
+                        }
                         Err(wgpu::SurfaceError::OutOfMemory) => target.exit(),
-                        Err(e) => eprintln!("{:?}", e),
+                        Err(e) => {
+                            world.queued_pixels.clear();
+                            eprintln!("{:?}", e);
+                        }
                     }
 
                     frame_count += 1;
@@ -268,6 +283,10 @@ fn main() {
             },
             Event::AboutToWait => {
                 let now = std::time::Instant::now();
+                let should_tick = now.duration_since(last_tick_time) >= tick_rate;
+                if should_tick {
+                    world.queued_pixels.clear();
+                }
                 while now.duration_since(last_tick_time) >= tick_rate {
                     last_tick_time += tick_rate;
                     world.simulate_step();

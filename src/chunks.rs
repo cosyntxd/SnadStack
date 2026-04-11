@@ -9,6 +9,7 @@ use crate::render::{PixelDiff, TextureId, TileInstance, MAX_PHYSICAL_TEXTURES, T
 
 pub const CHUNK_BYTE_SIZE: usize = (TILE_SIZE * TILE_SIZE * 4) as usize;
 pub const CHUNK_ELEMENTS: usize = (TILE_SIZE * TILE_SIZE) as usize;
+pub const SUB_CHUNK_SIZE: usize = 64;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ChunkCoord {
@@ -16,16 +17,16 @@ pub struct ChunkCoord {
     pub y: i32,
 }
 
-
 #[derive(Clone)]
 pub struct PhysicalSlot {
     pub current_coord: Option<ChunkCoord>,
+
+    pub elements: Box<[Element; CHUNK_ELEMENTS]>,
+
     pub last_visible_frame: u64,
     pub is_empty: bool,
-    pub pixels: Box<[u8; CHUNK_BYTE_SIZE]>,
-    pub elements: Box<[Element; CHUNK_ELEMENTS]>,
     pub vertices: Vec<Vector>,
-    pub last_updated_verts: u32,
+    pub last_updated_verts: u64,
 }
 
 impl Default for PhysicalSlot {
@@ -34,10 +35,6 @@ impl Default for PhysicalSlot {
             current_coord: None,
             last_visible_frame: 0,
             is_empty: true,
-            pixels: vec![0; CHUNK_BYTE_SIZE]
-                .into_boxed_slice()
-                .try_into()
-                .unwrap(),
             elements: vec![Element::empty(); CHUNK_ELEMENTS]
                 .into_boxed_slice()
                 .try_into()
@@ -247,15 +244,7 @@ impl ChunkManager {
 
                 slot.elements[local_y * TILE_SIZE as usize + local_x] = element;
 
-                let idx = (local_y * TILE_SIZE as usize + local_x) * 4;
-
-
-                slot.pixels[idx] = element.rgb[0];
-                slot.pixels[idx + 1] = element.rgb[1];
-                slot.pixels[idx + 2] = element.rgb[2];
-                slot.pixels[idx + 3] = 255;
-
-                return Some((slot_id, local_x as u8, local_y as u8));
+                return Some((slot_id as TextureId, local_x as u8, local_y as u8));
             }
         }
         None
@@ -279,16 +268,14 @@ impl ChunkManager {
         if had_diff {
             element.update_index = old_el.update_index;
             if let Some((t_id, lx, ly)) = self.set_element(world_x, world_y, element) {
-                let p = &self.physical_slots[t_id as usize].pixels
-                    [((ly as usize * TILE_SIZE as usize) + lx as usize) * 4..];
                 diffs[element.update_index as usize] = PixelDiff {
                     local_x: lx,
                     local_y: ly,
                     tile_id: t_id,
-                    r: p[0],
-                    g: p[1],
-                    b: p[2],
-                    a: p[3],
+                    r: element.rgb[0],
+                    g: element.rgb[1],
+                    b: element.rgb[2],
+                    a: if matches!(element.material, crate::element::CellType::Air) { 0 } else { 255 },
                     _padding: 0,
                 };
             }
@@ -296,16 +283,14 @@ impl ChunkManager {
             let diff_idx = diffs.len() as u32;
             element.update_index = diff_idx;
             if let Some((t_id, lx, ly)) = self.set_element(world_x, world_y, element) {
-                let p = &self.physical_slots[t_id as usize].pixels
-                    [((ly as usize * TILE_SIZE as usize) + lx as usize) * 4..];
                 diffs.push(PixelDiff {
                     local_x: lx,
                     local_y: ly,
                     tile_id: t_id,
-                    r: p[0],
-                    g: p[1],
-                    b: p[2],
-                    a: p[3],
+                    r: element.rgb[0],
+                    g: element.rgb[1],
+                    b: element.rgb[2],
+                    a: if matches!(element.material, crate::element::CellType::Air) { 0 } else { 255 },
                     _padding: 0,
                 });
             }
@@ -331,13 +316,13 @@ impl ChunkManager {
 
     pub fn update_vertices(&mut self, texture_id: TextureId, current_time: u32) {
         let slot = &mut self.physical_slots[texture_id as usize];
-        if slot.last_updated_verts < current_time {
+        if slot.last_updated_verts < current_time as u64 {
             slot.vertices = SimulatableBody::compute_convex_hull(
                 TILE_SIZE as usize,
                 TILE_SIZE as usize,
                 slot.elements.as_ref(),
             );
-            slot.last_updated_verts = current_time;
+            slot.last_updated_verts = current_time as u64;
         }
     }
 
