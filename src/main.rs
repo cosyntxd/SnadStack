@@ -140,6 +140,33 @@ fn main() {
 
                 WindowEvent::KeyboardInput { event, .. } => {
                     if event.state == ElementState::Pressed {
+                        if let PhysicalKey::Code(KeyCode::KeyQ) = event.physical_key {
+                            let world_x = world.camera_pos.x
+                                - ((gpu_manager.size.width as f32 / world.zoom) * 0.5)
+                                + (mouse_pos.x as f32 / world.zoom);
+                            let world_y = world.camera_pos.y
+                                - ((gpu_manager.size.height as f32 / world.zoom) * 0.5)
+                                + (mouse_pos.y as f32 / world.zoom);
+
+                            let width = 20;
+                            let height = 10;
+                            let mut elements = Vec::with_capacity(width * height);
+                            for _ in 0..(width * height) {
+                                let mut el = Element::empty();
+                                el.material = CellType::Stone;
+                                el.rgb = [100, 100, 100];
+                                elements.push(el);
+                            }
+
+                            world.physics.spawn_rigid_from_pixels(
+                                world_x,
+                                world_y,
+                                width,
+                                height,
+                                elements,
+                            );
+                        }
+
                         if let PhysicalKey::Code(KeyCode::KeyB) = event.physical_key {
                             let world_x = world.camera_pos.x
                                 - ((gpu_manager.size.width as f32 / world.zoom) * 0.5)
@@ -192,6 +219,7 @@ fn main() {
                             // Ensure the slot hasn't been reassigned to another coordinate while this one generated
                             if slot.current_coord == Some(result.coord) {
                                 slot.elements = result.elements;
+                                slot.needs_collider_update = true;
                                 gpu_manager.update_tile(physical_id, result.pixels.as_ref());
                             }
                         }

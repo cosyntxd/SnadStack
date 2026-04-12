@@ -1,5 +1,6 @@
 use glam::Vec2;
 use rapier2d::math::Vector;
+use rapier2d::prelude::RigidBodyHandle;
 use rustc_hash::FxHashMap;
 use winit::dpi::PhysicalSize;
 
@@ -27,6 +28,8 @@ pub struct PhysicalSlot {
     pub is_empty: bool,
     pub vertices: Vec<Vector>,
     pub last_updated_verts: u64,
+    pub needs_collider_update: bool,
+    pub static_body: Option<RigidBodyHandle>,
 }
 
 impl Default for PhysicalSlot {
@@ -41,6 +44,8 @@ impl Default for PhysicalSlot {
                 .unwrap(),
             vertices: Vec::new(),
             last_updated_verts: 0,
+            needs_collider_update: true,
+            static_body: None,
         }
     }
 }
@@ -158,6 +163,7 @@ impl ChunkManager {
             slot.current_coord = Some(coord);
             slot.last_visible_frame = self.frame_counter;
             slot.is_empty = false;
+            slot.needs_collider_update = true;
 
             self.active_mapping.insert(coord, slot_id);
 
@@ -243,6 +249,7 @@ impl ChunkManager {
                 let local_y = (world_y & 255) as usize;
 
                 slot.elements[local_y * TILE_SIZE as usize + local_x] = element;
+                slot.needs_collider_update = true;
 
                 return Some((slot_id as TextureId, local_x as u8, local_y as u8));
             }

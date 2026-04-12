@@ -10,11 +10,12 @@ pub enum CellType {
     Sand,
     Water,
     Brick,
+    Stone,
 }
+
 // todo: using a lot of memory
 #[derive(Clone, Copy, Debug)]
 pub struct Element {
-    // visual
     pub rgb: [u8; 3],
     pub material: CellType,
 
@@ -29,8 +30,10 @@ pub struct Element {
     pub temperature: f32,
 
     // hacky
+
     pub update_time: u32,
     pub update_index: u32, // if a cell moved multiple times, track the diff index
+    pub body_id: u32,
 }
 
 impl Element {
@@ -46,6 +49,7 @@ impl Element {
             temperature: 0.0,
             update_time: 0,
             update_index: 0,
+            body_id: 0,
         }
     }
 }

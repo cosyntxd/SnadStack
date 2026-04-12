@@ -2,9 +2,9 @@ use crate::element::Element;
 use glam::Vec2;
 use rapier2d::math::{Real, Vector};
 use rapier2d::prelude::*;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
-static BODY_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+static BODY_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 
 pub enum PhysicsForm {
     Rigid {
@@ -19,7 +19,7 @@ pub enum PhysicsForm {
 }
 
 pub struct SimulatableBody {
-    pub id: u64,
+    pub id: u32,
     pub form: PhysicsForm,
 
     pub width: usize,
@@ -29,6 +29,7 @@ pub struct SimulatableBody {
     pub y_center_offset: f32,
 
     pub elements: Vec<Element>,
+    pub last_rasterized: Vec<(i32, i32)>,
 }
 
 impl SimulatableBody {
@@ -48,6 +49,7 @@ impl SimulatableBody {
             x_center_offset,
             y_center_offset,
             elements,
+            last_rasterized: Vec::new(),
         }
     }
 
@@ -92,6 +94,17 @@ impl SimulatableBody {
                 // big todo here
                 None
             }
+        }
+    }
+
+    pub fn get_world_transform(&self, rigid_body_set: &RigidBodySet) -> Option<(Vec2, f32)> {
+        match &self.form {
+            PhysicsForm::Rigid { rigid_body, .. } => {
+                let body = rigid_body_set.get(*rigid_body)?;
+                let pos = body.position();
+                Some((Vec2::new(pos.translation.x, pos.translation.y), pos.rotation.angle()))
+            }
+            PhysicsForm::Soft { .. } => None,
         }
     }
 
@@ -160,6 +173,9 @@ impl SimulatableBody {
                     crate::element::CellType::Air
                 ) {
                     points.push(Vector::new(x as f32, y as f32));
+                    points.push(Vector::new(x as f32 + 1.0, y as f32));
+                    points.push(Vector::new(x as f32, y as f32 + 1.0));
+                    points.push(Vector::new(x as f32 + 1.0, y as f32 + 1.0));
                 }
             }
         }
@@ -220,7 +236,7 @@ pub struct PhysicsManager {
 
 impl Default for PhysicsManager {
     fn default() -> Self {
-        Self::new(Vec2::new(0.0, -9.81))
+        Self::new(Vec2::new(0.0, 600.0))
     }
 }
 
@@ -309,6 +325,7 @@ impl PhysicsManager {
 
         let rigid_body = RigidBodyBuilder::dynamic()
             .translation(Vector::new(world_x, world_y))
+            .ccd_enabled(true)
             .build();
 
         let rb_handle = self.rigid_body_set.insert(rigid_body);
@@ -339,6 +356,7 @@ impl PhysicsManager {
 
         let rigid_body = RigidBodyBuilder::dynamic()
             .translation(Vector::new(world_x, world_y))
+            .ccd_enabled(true)
             .build();
 
         let collider = ColliderBuilder::cuboid(hx, hy)
