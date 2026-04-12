@@ -533,7 +533,7 @@ impl GpuScreenManager {
         instance_count: u32,
         diffs: &[PixelDiff],
     ) -> Result<wgpu::SubmissionIndex, wgpu::SurfaceError> {
-        assert!(instance_count < 256);
+        assert!(instance_count <= 256);
         assert!(diffs.len() < MAX_DIFF_PER_FRAME);
 
         let output = self.surface.get_current_texture()?;
