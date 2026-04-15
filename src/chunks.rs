@@ -1,6 +1,4 @@
 use glam::Vec2;
-use rapier2d::math::Vector;
-use rapier2d::prelude::RigidBodyHandle;
 use rustc_hash::FxHashMap;
 use winit::dpi::PhysicalSize;
 
@@ -26,10 +24,6 @@ pub struct PhysicalSlot {
 
     pub last_visible_frame: u64,
     pub is_empty: bool,
-    pub vertices: Vec<Vector>,
-    pub last_updated_verts: u64,
-    pub needs_collider_update: bool,
-    pub static_body: Option<RigidBodyHandle>,
 }
 
 impl Default for PhysicalSlot {
@@ -42,10 +36,6 @@ impl Default for PhysicalSlot {
                 .into_boxed_slice()
                 .try_into()
                 .unwrap(),
-            vertices: Vec::new(),
-            last_updated_verts: 0,
-            needs_collider_update: true,
-            static_body: None,
         }
     }
 }
@@ -163,8 +153,6 @@ impl ChunkManager {
             slot.current_coord = Some(coord);
             slot.last_visible_frame = self.frame_counter;
             slot.is_empty = false;
-            slot.needs_collider_update = true;
-
             self.active_mapping.insert(coord, slot_id);
 
             commands.push(ChunkCommand::UploadToGpu {
@@ -249,7 +237,6 @@ impl ChunkManager {
                 let local_y = (world_y & 255) as usize;
 
                 slot.elements[local_y * TILE_SIZE as usize + local_x] = element;
-                slot.needs_collider_update = true;
 
                 return Some((slot_id as TextureId, local_x as u8, local_y as u8));
             }
@@ -319,18 +306,6 @@ impl ChunkManager {
 
         self.set_element_with_diff(x1, y1, e2, diffs, current_time, last_render_tick);
         self.set_element_with_diff(x2, y2, e1, diffs, current_time, last_render_tick);
-    }
-
-    pub fn update_vertices(&mut self, texture_id: TextureId, current_time: u32) {
-        let slot = &mut self.physical_slots[texture_id as usize];
-        if slot.last_updated_verts < current_time as u64 {
-            slot.vertices = SimulatableBody::compute_convex_hull(
-                TILE_SIZE as usize,
-                TILE_SIZE as usize,
-                slot.elements.as_ref(),
-            );
-            slot.last_updated_verts = current_time as u64;
-        }
     }
 
     pub fn is_in_view(

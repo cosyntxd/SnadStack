@@ -134,7 +134,7 @@ impl GpuScreenManager {
         let mut selected_adapter = None;
         for adapter in instance.enumerate_adapters(wgpu::Backends::all()).await {
             let info = adapter.get_info();
-            println!("{:?}", info);
+            // println!("{:?}", info);
             // 2. Check for the NVIDIA vendor ID (0x10DE)
             // You can also check the string: info.name.to_lowercase().contains("nvidia")
             if info.vendor == 0x10DE {

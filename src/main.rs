@@ -219,7 +219,6 @@ fn main() {
                             // Ensure the slot hasn't been reassigned to another coordinate while this one generated
                             if slot.current_coord == Some(result.coord) {
                                 slot.elements = result.elements;
-                                slot.needs_collider_update = true;
                                 gpu_manager.update_tile(physical_id, result.pixels.as_ref());
                             }
                         }
