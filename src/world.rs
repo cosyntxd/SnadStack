@@ -351,7 +351,7 @@ impl World {
             .filter(|&&c| {
                 self.chunks
                     .is_in_view(c, self.camera_pos, self.screen_size, self.zoom)
-                    && self.chunks.active_mapping.contains_key(&c)
+                    && self.chunks.has_chunk(c)
             })
             .cloned()
             .collect();
@@ -359,7 +359,7 @@ impl World {
 
         let is_even = self.ticks % 2 == 0;
 
-        for coord in active_coords {
+        for coord in &active_coords {
             let base_x = coord.x * TILE_SIZE as i32;
             let base_y = coord.y * TILE_SIZE as i32;
 
@@ -405,8 +405,11 @@ impl World {
                         if let Some(t) = self.chunks.get_element(world_x + dir, world_y + 1) {
                             if matches!(t.material, CellType::Air | CellType::Water) { can_move_s2 = true; }
                         }
-
+                        let below_vy = self.chunks.get_element(world_x, world_y + 1)
+                            .map(|t| t.vy as i32)
+                            .unwrap_or(i8::MAX as i32);
                         if !can_move_down && !can_move_s1 && !can_move_s2 {
+
                             if new_el.vy != 0 || new_el.sub_y != 0 {
                                 new_el.vy = 0;
                                 new_el.sub_y = 0;
@@ -416,7 +419,13 @@ impl World {
                         }
 
                         // 600 px/s^2 -> 24 units per tick (with scale=100)
-                        new_el.vy = new_el.vy.saturating_add(24).min(1000);
+                        // prevent top from falling faster than elements below (clump falling together)
+
+                        // if below_vy - 24 >= el.vy as i32 {
+                            new_el.vy = new_el.vy.saturating_add(24).min(1000);
+                        // }
+
+                        // new_el.vy = new_el.vy.saturating_add(24).min(1000);
                         let total_y = new_el.vy as i32 + new_el.sub_y as i32;
                         let move_y = total_y / 100;
                         new_el.sub_y = (total_y % 100) as i8;
@@ -463,7 +472,7 @@ impl World {
                             }
                         }
 
-                        if hit_ground {
+                        if hit_ground && below_vy < new_el.vy as i32 {
                             new_el.vy = 0;
                             new_el.sub_y = 0;
                         }
@@ -475,55 +484,5 @@ impl World {
                 }
             }
         }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct PixelQueue {
-    pub diffs: Vec<PixelDiff>,
-    pub compute_time_ms: u64,
-    pub tick: u64,
-}
-
-impl PixelQueue {
-    pub fn new() -> Self {
-        Self {
-            diffs: Vec::new(),
-            compute_time_ms: 0,
-            tick: 0,
-        }
-    }
-}
-
-pub struct DiffQueueManager {
-    cache: Vec<PixelQueue>,
-    render: PixelQueue,
-    completed: Vec<PixelQueue>,
-}
-
-impl DiffQueueManager {
-    pub fn new() -> Self {
-        Self {
-            cache: Vec::new(),
-            render: PixelQueue::new(),
-            completed: Vec::new(),
-        }
-    }
-
-    pub fn complete_simulation(&mut self) {
-        let next_render = self.cache.pop().unwrap_or_else(PixelQueue::new);
-        let old_render = std::mem::replace(&mut self.render, next_render);
-        self.completed.push(old_render);
-    }
-
-    pub fn complete_draw(&mut self) {
-        for mut queue in self.completed.drain(..) {
-            queue.diffs.clear();
-            self.cache.push(queue);
-        }
-    }
-
-    pub fn get_renderable(&self) -> &Vec<PixelQueue> {
-        &self.completed
     }
 }

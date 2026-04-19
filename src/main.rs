@@ -213,7 +213,7 @@ fn main() {
                 WindowEvent::RedrawRequested => {
                     // 1. Process Loaded Chunks
                     while let Ok(result) = rx_res.try_recv() {
-                        if let Some(&physical_id) = world.chunks.active_mapping.get(&result.coord)
+                        if let Some(physical_id) = world.chunks.get_chunk_slot(result.coord)
                         {
                             let slot = &mut world.chunks.physical_slots[physical_id as usize];
                             // Ensure the slot hasn't been reassigned to another coordinate while this one generated
@@ -282,20 +282,19 @@ fn main() {
 
                     if render_result.is_ok() {
                         world.last_render_tick = world.ticks;
-                    }
-
-                    match render_result {
-                        Ok(_) => {
-                            world.queued_pixels.clear();
-                        }
-                        Err(wgpu::SurfaceError::Lost) => {
-                            world.queued_pixels.clear();
-                            gpu_manager.resize(gpu_manager.size);
-                        }
-                        Err(wgpu::SurfaceError::OutOfMemory) => target.exit(),
-                        Err(e) => {
-                            world.queued_pixels.clear();
-                            eprintln!("{:?}", e);
+                        world.queued_pixels.clear();
+                    } else {
+                        world.last_render_tick = world.ticks;
+                        world.queued_pixels.clear();
+                        match render_result {
+                            Err(wgpu::SurfaceError::Lost) => {
+                                gpu_manager.resize(gpu_manager.size);
+                            }
+                            Err(wgpu::SurfaceError::OutOfMemory) => target.exit(),
+                            Err(e) => {
+                                eprintln!("{:?}", e);
+                            }
+                            _ => {}
                         }
                     }
 
@@ -310,10 +309,6 @@ fn main() {
             },
             Event::AboutToWait => {
                 let now = std::time::Instant::now();
-                let should_tick = now.duration_since(last_tick_time) >= tick_rate;
-                if should_tick {
-                    world.queued_pixels.clear();
-                }
                 while now.duration_since(last_tick_time) >= tick_rate {
                     last_tick_time += tick_rate;
                     world.simulate_step();
