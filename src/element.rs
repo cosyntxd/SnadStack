@@ -30,7 +30,6 @@ pub struct Element {
     pub temperature: f32,
 
     // hacky
-
     pub update_time: u32,
     pub update_index: u32, // if a cell moved multiple times, track the diff index
     pub body_id: u32,
@@ -53,5 +52,3 @@ impl Element {
         }
     }
 }
-
-// pub struct
