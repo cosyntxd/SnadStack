@@ -38,7 +38,10 @@ fn bench_chunk_logic(c: &mut Criterion) {
 }
 
 fn bench_wgpu_operations(c: &mut Criterion) {
-    let _ = env_logger::builder().is_test(true).filter_level(log::LevelFilter::Warn).try_init();
+    let _ = env_logger::builder()
+        .is_test(true)
+        .filter_level(log::LevelFilter::Warn)
+        .try_init();
 
     let mut event_loop = EventLoop::new().unwrap();
     let (mut gpu_manager, _window) = pollster::block_on(setup_gpu(&event_loop));
@@ -53,7 +56,10 @@ fn bench_wgpu_operations(c: &mut Criterion) {
             upload_submissions.push_back(idx);
             if upload_submissions.len() > 3 {
                 let old_idx = upload_submissions.pop_front().unwrap();
-                let _ = gpu_manager.device.poll(wgpu::PollType::Wait { submission_index: Some(old_idx), timeout: None });
+                let _ = gpu_manager.device.poll(wgpu::PollType::Wait {
+                    submission_index: Some(old_idx),
+                    timeout: None,
+                });
             } else {
                 let _ = gpu_manager.device.poll(wgpu::PollType::Poll);
             }
@@ -64,10 +70,10 @@ fn bench_wgpu_operations(c: &mut Criterion) {
     for i in 0..100 {
         let mut random_data = [0u8; CHUNK_BYTE_SIZE];
         for p in (0..random_data.len()).step_by(4) {
-            random_data[p] = (p.wrapping_add(i * 13) % 256) as u8;       // R
-            random_data[p + 1] = (p.wrapping_add(i * 17) % 256) as u8;   // G
-            random_data[p + 2] = (p.wrapping_add(i * 19) % 256) as u8;   // B
-            random_data[p + 3] = 255;                                    // A
+            random_data[p] = (p.wrapping_add(i * 13) % 256) as u8; // R
+            random_data[p + 1] = (p.wrapping_add(i * 17) % 256) as u8; // G
+            random_data[p + 2] = (p.wrapping_add(i * 19) % 256) as u8; // B
+            random_data[p + 3] = 255; // A
         }
         gpu_manager.update_tile(i as u8, &random_data);
 
@@ -107,7 +113,10 @@ fn bench_wgpu_operations(c: &mut Criterion) {
                 render_submissions.push_back(idx);
                 if render_submissions.len() > 3 {
                     let old_idx = render_submissions.pop_front().unwrap();
-                    let _ = gpu_manager.device.poll(wgpu::PollType::Wait { submission_index: Some(old_idx), timeout: None });
+                    let _ = gpu_manager.device.poll(wgpu::PollType::Wait {
+                        submission_index: Some(old_idx),
+                        timeout: None,
+                    });
                 } else {
                     let _ = gpu_manager.device.poll(wgpu::PollType::Poll);
                 }
