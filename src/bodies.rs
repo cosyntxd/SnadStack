@@ -53,7 +53,7 @@ impl SimulatableBody {
         }
     }
 
-    #[inline]
+    #[inline(never)]
     pub fn get_element(&self, local_x: usize, local_y: usize) -> Option<&Element> {
         if local_x < self.width && local_y < self.height {
             Some(&self.elements[local_y * self.width + local_x])
@@ -62,7 +62,9 @@ impl SimulatableBody {
         }
     }
 
-    #[inline]
+    // #[inline]
+    #[inline(never)]
+
     pub fn get_element_mut(&mut self, local_x: usize, local_y: usize) -> Option<&mut Element> {
         if local_x < self.width && local_y < self.height {
             Some(&mut self.elements[local_y * self.width + local_x])
@@ -96,13 +98,17 @@ impl SimulatableBody {
             }
         }
     }
+    #[inline(never)]
 
     pub fn get_world_transform(&self, rigid_body_set: &RigidBodySet) -> Option<(Vec2, f32)> {
         match &self.form {
             PhysicsForm::Rigid { rigid_body, .. } => {
                 let body = rigid_body_set.get(*rigid_body)?;
                 let pos = body.position();
-                Some((Vec2::new(pos.translation.x, pos.translation.y), pos.rotation.angle()))
+                Some((
+                    Vec2::new(pos.translation.x, pos.translation.y),
+                    pos.rotation.angle(),
+                ))
             }
             PhysicsForm::Soft { .. } => None,
         }
@@ -161,6 +167,7 @@ impl SimulatableBody {
 
         islands
     }
+    #[inline(never)]
 
     /// Gift Wrapping (Jarvis March) algorithm.
     pub fn compute_convex_hull(width: usize, height: usize, elements: &[Element]) -> Vec<Vector> {
@@ -274,6 +281,7 @@ impl PhysicsManager {
             &(),
         );
     }
+    #[inline(never)]
 
     pub fn spawn_rigid_from_pixels(
         &mut self,
