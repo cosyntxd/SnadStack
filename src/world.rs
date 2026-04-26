@@ -7,8 +7,8 @@ use winit::dpi::PhysicalSize;
 
 
 pub enum WorldUserActions {
-    ApplyPhysicsForce {  },
-    Place
+    ApplyPhysicsForce { body_id: u32, force: Vec2 },
+    PlaceElements { element: Element, radius: u16 }
 }
 
 pub struct World {
@@ -422,7 +422,7 @@ impl World {
                         // prevent top from falling faster than elements below (clump falling together)
 
                         // if below_vy - 24 >= el.vy as i32 {
-                            new_el.vy = new_el.vy.saturating_add(24).min(1000);
+new_el.vy = new_el.vy.saturating_add(24).min(127);
                         // }
 
                         // new_el.vy = new_el.vy.saturating_add(24).min(1000);

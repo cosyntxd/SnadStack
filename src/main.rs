@@ -217,7 +217,7 @@ fn main() {
                         {
                             let slot = &mut world.chunks.physical_slots[physical_id as usize];
                             // Ensure the slot hasn't been reassigned to another coordinate while this one generated
-                            if slot.current_coord == Some(result.coord) {
+                            if slot.current_coord == result.coord {
                                 slot.elements = result.elements;
                                 gpu_manager.update_tile(physical_id, result.pixels.as_ref());
                             }

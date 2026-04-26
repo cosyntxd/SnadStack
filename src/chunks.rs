@@ -19,6 +19,7 @@ pub struct PhysicalSlot {
     pub elements: Box<[Element; CHUNK_ELEMENTS]>,
     pub sim_regions: [u8; 32], // 32*8 = 16px^2 regions
     pub last_visible_frame: u64,
+    pub is_free: bool,
 }
 
 impl Default for PhysicalSlot {
@@ -31,6 +32,7 @@ impl Default for PhysicalSlot {
                 .try_into()
                 .unwrap(),
             sim_regions: [0xFF; 32],
+            is_free: true,
         }
     }
 }
@@ -158,13 +160,16 @@ impl ChunkManager {
         for slot_id in 0..MAX_PHYSICAL_TEXTURES {
             let slot = &mut self.physical_slots[slot_id as usize];
 
-            let coord = slot.current_coord;
-            commands.push(ChunkCommand::EvictedFromGpu { coord });
+            if slot.is_free && slot.last_visible_frame < self.frame_counter {
+                slot.is_free = true;
+                let coord = slot.current_coord;
+                commands.push(ChunkCommand::EvictedFromGpu { coord });
 
-            let idx = Self::map_index(coord.x, coord.y);
-            if let Some((c, _)) = self.active_mapping[idx] {
-                if c == coord {
-                    self.active_mapping[idx] = None;
+                let idx = Self::map_index(coord.x, coord.y);
+                if let Some((c, _)) = self.active_mapping[idx] {
+                    if c == coord {
+                        self.active_mapping[idx] = None;
+                    }
                 }
             }
         }
@@ -174,17 +179,20 @@ impl ChunkManager {
 
             let slot = &mut self.physical_slots[slot_id as usize];
 
-            let old_coord = slot.current_coord;
-            commands.push(ChunkCommand::EvictedFromGpu { coord: old_coord });
-            let old_idx = Self::map_index(old_coord.x, old_coord.y);
-            if let Some((c, _)) = self.active_mapping[old_idx] {
-                if c == old_coord {
-                    self.active_mapping[old_idx] = None;
+            if !slot.is_free {
+                let old_coord = slot.current_coord;
+                commands.push(ChunkCommand::EvictedFromGpu { coord: old_coord });
+                let old_idx = Self::map_index(old_coord.x, old_coord.y);
+                if let Some((c, _)) = self.active_mapping[old_idx] {
+                    if c == old_coord {
+                        self.active_mapping[old_idx] = None;
+                    }
                 }
             }
 
             slot.current_coord = coord;
             slot.last_visible_frame = self.frame_counter;
+            slot.is_free = false;
 
             let idx = Self::map_index(coord.x, coord.y);
             self.active_mapping[idx] = Some((coord, slot_id));
@@ -204,6 +212,9 @@ impl ChunkManager {
         let mut min_frame = u64::MAX;
 
         for (i, slot) in self.physical_slots.iter().enumerate() {
+            if slot.is_free {
+                return i as TextureId;
+            }
             if slot.last_visible_frame < min_frame {
                 min_frame = slot.last_visible_frame;
                 lru_id = i;
@@ -217,14 +228,16 @@ impl ChunkManager {
     pub fn get_instances(&self) -> Vec<TileInstance> {
         let mut instances = Vec::with_capacity(256);
         for (i, slot) in self.physical_slots.iter().enumerate() {
-            instances.push(TileInstance {
-                position: [
-                    slot.current_coord.x as f32 * TILE_SIZE as f32,
-                    slot.current_coord.y as f32 * TILE_SIZE as f32,
-                ],
-                _padding: [0; 3],
-                texture_id: i as TextureId,
-            });
+            if !slot.is_free {
+                instances.push(TileInstance {
+                    position: [
+                        slot.current_coord.x as f32 * TILE_SIZE as f32,
+                        slot.current_coord.y as f32 * TILE_SIZE as f32,
+                    ],
+                    _padding: [0; 3],
+                    texture_id: i as TextureId,
+                });
+            }
         }
         instances
     }
