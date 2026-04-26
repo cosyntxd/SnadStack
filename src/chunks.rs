@@ -15,23 +15,22 @@ pub struct ChunkCoord {
 
 #[derive(Clone)]
 pub struct PhysicalSlot {
-    pub current_coord: Option<ChunkCoord>,
+    pub current_coord: ChunkCoord,
     pub elements: Box<[Element; CHUNK_ELEMENTS]>,
-    // pub dirty_regions: [u8; 32],
+    pub sim_regions: [u8; 32], // 32*8 = 16px^2 regions
     pub last_visible_frame: u64,
-    pub is_empty: bool,
 }
 
 impl Default for PhysicalSlot {
     fn default() -> Self {
         Self {
-            current_coord: None,
+            current_coord: ChunkCoord { x: 0, y: 0 },
             last_visible_frame: 0,
-            is_empty: true,
             elements: vec![Element::empty(); CHUNK_ELEMENTS]
                 .into_boxed_slice()
                 .try_into()
                 .unwrap(),
+            sim_regions: [0xFF; 32],
         }
     }
 }
@@ -158,16 +157,14 @@ impl ChunkManager {
 
         for slot_id in 0..MAX_PHYSICAL_TEXTURES {
             let slot = &mut self.physical_slots[slot_id as usize];
-            if !slot.is_empty && slot.last_visible_frame < self.frame_counter {
-                slot.is_empty = true;
-                let coord = slot.current_coord.unwrap();
-                commands.push(ChunkCommand::EvictedFromGpu { coord });
 
-                let idx = Self::map_index(coord.x, coord.y);
-                if let Some((c, _)) = self.active_mapping[idx] {
-                    if c == coord {
-                        self.active_mapping[idx] = None;
-                    }
+            let coord = slot.current_coord;
+            commands.push(ChunkCommand::EvictedFromGpu { coord });
+
+            let idx = Self::map_index(coord.x, coord.y);
+            if let Some((c, _)) = self.active_mapping[idx] {
+                if c == coord {
+                    self.active_mapping[idx] = None;
                 }
             }
         }
@@ -177,20 +174,17 @@ impl ChunkManager {
 
             let slot = &mut self.physical_slots[slot_id as usize];
 
-            if !slot.is_empty {
-                let old_coord = slot.current_coord.unwrap();
-                commands.push(ChunkCommand::EvictedFromGpu { coord: old_coord });
-                let old_idx = Self::map_index(old_coord.x, old_coord.y);
-                if let Some((c, _)) = self.active_mapping[old_idx] {
-                    if c == old_coord {
-                        self.active_mapping[old_idx] = None;
-                    }
+            let old_coord = slot.current_coord;
+            commands.push(ChunkCommand::EvictedFromGpu { coord: old_coord });
+            let old_idx = Self::map_index(old_coord.x, old_coord.y);
+            if let Some((c, _)) = self.active_mapping[old_idx] {
+                if c == old_coord {
+                    self.active_mapping[old_idx] = None;
                 }
             }
 
-            slot.current_coord = Some(coord);
+            slot.current_coord = coord;
             slot.last_visible_frame = self.frame_counter;
-            slot.is_empty = false;
 
             let idx = Self::map_index(coord.x, coord.y);
             self.active_mapping[idx] = Some((coord, slot_id));
@@ -210,9 +204,6 @@ impl ChunkManager {
         let mut min_frame = u64::MAX;
 
         for (i, slot) in self.physical_slots.iter().enumerate() {
-            if slot.is_empty {
-                return i as TextureId;
-            }
             if slot.last_visible_frame < min_frame {
                 min_frame = slot.last_visible_frame;
                 lru_id = i;
@@ -226,18 +217,14 @@ impl ChunkManager {
     pub fn get_instances(&self) -> Vec<TileInstance> {
         let mut instances = Vec::with_capacity(256);
         for (i, slot) in self.physical_slots.iter().enumerate() {
-            if !slot.is_empty {
-                if let Some(coord) = slot.current_coord {
-                    instances.push(TileInstance {
-                        position: [
-                            coord.x as f32 * TILE_SIZE as f32,
-                            coord.y as f32 * TILE_SIZE as f32,
-                        ],
-                        _padding: [0; 3],
-                        texture_id: i as TextureId,
-                    });
-                }
-            }
+            instances.push(TileInstance {
+                position: [
+                    slot.current_coord.x as f32 * TILE_SIZE as f32,
+                    slot.current_coord.y as f32 * TILE_SIZE as f32,
+                ],
+                _padding: [0; 3],
+                texture_id: i as TextureId,
+            });
         }
         instances
     }

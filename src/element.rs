@@ -13,15 +13,20 @@ pub enum CellType {
     Stone,
 }
 
-// todo: using a lot of memory
+// Discreet cell to represent everything in the engine. Any type of fluid, solid
+// or gas is either natively represented as this or converted if meant to ineract
+// with other elements in the environment.
 #[derive(Clone, Copy, Debug)]
 pub struct Element {
     pub rgb: [u8; 3],
     pub material: CellType,
 
     // physics
-    pub vx: i16,
-    pub vy: i16,
+    // Velocity is stepped with a modified Bresenham line algorithm
+    // |vx|, vy| < 128 = 16 px/tick (8 sub pixels)
+    // |sub_x|, |sub_y| < 8
+    pub vx: i8,
+    pub vy: i8,
     pub sub_x: i8,
     pub sub_y: i8,
 
