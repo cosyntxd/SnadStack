@@ -70,76 +70,13 @@ impl World {
         let mut updates = Vec::new();
 
         for body in &mut self.physics.active_bodies {
-            if let Some((pos, angle)) = body.get_world_transform(&self.physics.rigid_body_set) {
-                let cos_a = angle.cos();
-                let sin_a = angle.sin();
-
-                // world bounding box of the rotated body
-                let w = body.width as f32;
-                let h = body.height as f32;
-
-                let corners = [
-                    (0.0, 0.0),
-                    (w, 0.0),
-                    (0.0, h),
-                    (w, h),
-                ];
-
-                let mut min_wx = f32::MAX;
-                let mut max_wx = f32::MIN;
-                let mut min_wy = f32::MAX;
-                let mut max_wy = f32::MIN;
-
-                for (cx, cy) in corners {
-                    let local_x = cx - body.x_center_offset;
-                    let local_y = cy - body.y_center_offset;
-
-                    let world_x = pos.x + local_x * cos_a - local_y * sin_a;
-                    let world_y = pos.y + local_x * sin_a + local_y * cos_a;
-
-                    min_wx = min_wx.min(world_x);
-                    max_wx = max_wx.max(world_x);
-                    min_wy = min_wy.min(world_y);
-                    max_wy = max_wy.max(world_y);
-                }
-
-                let start_x = min_wx.floor() as i32;
-                let end_x = max_wx.ceil() as i32;
-                let start_y = min_wy.floor() as i32;
-                let end_y = max_wy.ceil() as i32;
-
-                // inverse mapping)
-                for wy in start_y..=end_y {
-                    for wx in start_x..=end_x {
-                        // Transform world coordinate back to local space
-                        let dx = (wx as f32) - pos.x;
-                        let dy = (wy as f32) - pos.y;
-
-                        // cos(-a) = cos(a), sin(-a) = -sin(a)
-                        let local_x_f = dx * cos_a + dy * sin_a + body.x_center_offset;
-                        let local_y_f = -dx * sin_a + dy * cos_a + body.y_center_offset;
-
-                        let lx = local_x_f.round() as i32;
-                        let ly = local_y_f.round() as i32;
-
-                        if lx >= 0 && lx < body.width as i32 && ly >= 0 && ly < body.height as i32 {
-                            let el = body.elements[ly as usize * body.width + lx as usize];
-                            if !matches!(el.material, CellType::Air) {
-                                let mut new_el = el;
-                                new_el.body_id = body.id;
-                                updates.push((body.id, wx, wy, new_el));
-                            }
-                        }
-                    }
-                }
-            }
+            updates.extend(body.rasterize(&self.physics.rigid_body_set));
         }
 
         for (b_id, wx, wy, el) in updates {
             let existing = self.chunks.get_element(wx, wy);
             if let Some(ex_el) = existing {
 
-                // dont overwrite
                 if ex_el.body_id == 0 && !matches!(ex_el.material, CellType::Air) {
                     continue;
                 }
@@ -335,14 +272,6 @@ impl World {
         self.physics.step();
         self.resolve_rigid_grid_collisions();
         self.rasterize_bodies();
-
-        // if self.ticks % 50 == 0 && !self.physics.active_bodies.is_empty() {
-        //     for body in &self.physics.active_bodies {
-        //         if let Some((pos, _)) = body.get_world_transform(&self.physics.rigid_body_set) {
-        //             println!("Tick {}: Body {} at ({:.2}, {:.2})", self.ticks, body.id, pos.x, pos.y);
-        //         }
-        //     }
-        // }
 
         let mut active_coords: Vec<_> = self
             .chunks

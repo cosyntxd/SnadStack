@@ -1,4 +1,4 @@
-use crate::element::Element;
+use crate::element::{CellType, Element};
 use glam::Vec2;
 use rapier2d::math::{Real, Vector};
 use rapier2d::prelude::*;
@@ -222,6 +222,70 @@ impl SimulatableBody {
         }
 
         hull
+    }
+    pub fn rasterize(&mut self, rigid_body_set: &RigidBodySet) -> Vec<(u32, i32, i32, Element)>{
+        let mut updates = vec![];
+
+        if let Some((pos, angle)) = self.get_world_transform(&rigid_body_set) {
+            let cos_a = angle.cos();
+            let sin_a = angle.sin();
+
+            let w = self.width as f32;
+            let h = self.height as f32;
+
+            let corners = [
+                (0.0, 0.0),
+                (w, 0.0),
+                (0.0, h),
+                (w, h),
+            ];
+
+            let mut min_wx = f32::MAX;
+            let mut max_wx = f32::MIN;
+            let mut min_wy = f32::MAX;
+            let mut max_wy = f32::MIN;
+
+            for (cx, cy) in corners {
+                let local_x = cx - self.x_center_offset;
+                let local_y = cy - self.y_center_offset;
+
+                let world_x = pos.x + local_x * cos_a - local_y * sin_a;
+                let world_y = pos.y + local_x * sin_a + local_y * cos_a;
+
+                min_wx = min_wx.min(world_x);
+                max_wx = max_wx.max(world_x);
+                min_wy = min_wy.min(world_y);
+                max_wy = max_wy.max(world_y);
+            }
+
+            let start_x = min_wx.floor() as i32;
+            let end_x = max_wx.ceil() as i32;
+            let start_y = min_wy.floor() as i32;
+            let end_y = max_wy.ceil() as i32;
+
+            for wy in start_y..=end_y {
+                for wx in start_x..=end_x {
+                    let dx = (wx as f32) - pos.x;
+                    let dy = (wy as f32) - pos.y;
+
+                    let local_x_f = dx * cos_a + dy * sin_a + self.x_center_offset;
+                    let local_y_f = -dx * sin_a + dy * cos_a + self.y_center_offset;
+
+                    let lx = local_x_f.round() as i32;
+                    let ly = local_y_f.round() as i32;
+
+                    if lx >= 0 && lx < self.width as i32 && ly >= 0 && ly < self.height as i32 {
+                        let el = self.elements[ly as usize * self.width + lx as usize];
+                        if !matches!(el.material, CellType::Air) {
+                            let mut new_el = el;
+                            new_el.body_id = self.id;
+                            updates.push((self.id, wx, wy, new_el));
+                        }
+                    }
+                }
+            }
+        }
+        updates
     }
 }
 
