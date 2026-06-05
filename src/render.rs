@@ -1,7 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3};
 use std::{mem, sync::Arc};
-use wgpu::{BlendState, util::DeviceExt};
+use wgpu::{util::DeviceExt, BlendState};
 use winit::{dpi::PhysicalSize, window::Window};
 
 pub const TILE_SIZE: u32 = 256;
@@ -162,7 +162,10 @@ impl GpuScreenManager {
             .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
-        let present_mode = if surface_caps.present_modes.contains(&wgpu::PresentMode::Immediate) {
+        let present_mode = if surface_caps
+            .present_modes
+            .contains(&wgpu::PresentMode::Immediate)
+        {
             wgpu::PresentMode::Immediate
         } else {
             surface_caps.present_modes[0]
@@ -363,7 +366,6 @@ impl GpuScreenManager {
                 label: Some("Render Layout"),
                 bind_group_layouts: &[&camera_layout, &texture_layout],
                 immediate_size: 0,
-
             });
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render PL"),
@@ -433,7 +435,6 @@ impl GpuScreenManager {
                 label: Some("Compute Layout"),
                 bind_group_layouts: &[&compute_layout],
                 immediate_size: 0,
-
             });
         let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Compute PL"),
@@ -462,6 +463,13 @@ impl GpuScreenManager {
             camera_bind_group,
             texture_bind_group,
         }
+    }
+    pub fn create_pixel_streamer(&self) -> PixelStreamer {
+        PixelStreamer::new(
+            self.queue.clone(),
+            self.diff_buffer.clone(),
+            MAX_DIFF_PER_FRAME as u32
+        )
     }
 
     pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
@@ -598,5 +606,57 @@ impl GpuScreenManager {
         let submission = self.queue.submit(Some(encoder.finish()));
         output.present();
         Ok(submission)
+    }
+}
+
+pub struct PixelStreamer {
+    queue: wgpu::Queue,
+    diff_buffer: wgpu::Buffer,
+
+    current_count: u32,
+    max_capacity: u32,
+}
+
+impl PixelStreamer {
+    pub fn new(queue: wgpu::Queue, diff_buffer: wgpu::Buffer, max_capacity: u32) -> Self {
+        Self {
+            queue,
+            diff_buffer,
+            current_count: 0,
+            max_capacity,
+        }
+    }
+    pub fn add_pixels(&mut self, diffs: &[PixelDiff]) {
+        if diffs.is_empty() {
+            return;
+        }
+
+        let start_idx = self.current_count as usize;
+        let end_idx = start_idx + diffs.len();
+
+        if end_idx > self.max_capacity as usize {
+            println!("Warning: Dropping diffs! Exceeded max capacity ({})", self.max_capacity);
+            return;
+        }
+
+        let offset = (start_idx * mem::size_of::<PixelDiff>()) as u64;
+
+        self.queue.write_buffer(
+            &self.diff_buffer,
+            offset,
+            bytemuck::cast_slice(diffs),
+        );
+
+        self.current_count = end_idx as u32;
+
+        self.queue.submit(None);
+    }
+
+    pub fn current_count(&self) -> u32 {
+        self.current_count
+    }
+
+    pub fn reset(&mut self) {
+        self.current_count = 0;
     }
 }
