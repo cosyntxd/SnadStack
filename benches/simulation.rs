@@ -42,7 +42,7 @@ fn bench_simulation(c: &mut Criterion) {
                         cx + dx,
                         cy + dy,
                         el,
-                        &mut world.queued_pixels,
+                        &mut world.streamer,
                         world.ticks,
                         world.last_render_tick,
                     );
@@ -61,7 +61,7 @@ fn bench_simulation(c: &mut Criterion) {
         }
     }
 
-    world.queued_pixels.clear();
+    if let Some(s) = &mut world.streamer { s.current_diffs.clear(); }
 
     c.bench_function("simulate_10x10_scattered", |b| {
         b.iter(|| {

@@ -14,7 +14,7 @@ pub enum WorldUserActions {
 pub struct World {
     pub chunks: ChunkManager,
     pub physics: PhysicsManager,
-    pub queued_pixels: Vec<PixelDiff>,
+    pub streamer: Option<crate::render::PixelStreamer>,
     pub ticks: u32,
     pub last_render_tick: u32,
     pub camera_pos: Vec2,
@@ -27,7 +27,7 @@ impl World {
         Self {
             chunks: ChunkManager::new(),
             physics: PhysicsManager::new(Vec2::new(0.0, 600.0)),
-            queued_pixels: Vec::new(),
+            streamer: None,
             ticks: 0,
             last_render_tick: 0,
             camera_pos: Vec2::ZERO,
@@ -55,7 +55,7 @@ impl World {
                             wx,
                             wy,
                             empty,
-                            &mut self.queued_pixels,
+                            &mut self.streamer,
                             self.ticks,
                             self.last_render_tick,
                         );
@@ -85,7 +85,7 @@ impl World {
                     wx,
                     wy,
                     el,
-                    &mut self.queued_pixels,
+                    &mut self.streamer,
                     self.ticks,
                     self.last_render_tick,
                 );
@@ -342,7 +342,7 @@ impl World {
                             if new_el.vy != 0 || new_el.sub_y != 0 {
                                 new_el.vy = 0;
                                 new_el.sub_y = 0;
-                                self.chunks.set_element_with_diff(world_x, world_y, new_el, &mut self.queued_pixels, self.ticks, self.last_render_tick);
+                                self.chunks.set_element_with_diff(world_x, world_y, new_el, &mut self.streamer, self.ticks, self.last_render_tick);
                             }
                             continue;
                         }
@@ -360,7 +360,7 @@ new_el.vy = new_el.vy.saturating_add(24).min(127);
                         new_el.sub_y = (total_y % 100) as i8;
 
                         if move_y == 0 {
-                            self.chunks.set_element_with_diff(world_x, world_y, new_el, &mut self.queued_pixels, self.ticks, self.last_render_tick);
+                            self.chunks.set_element_with_diff(world_x, world_y, new_el, &mut self.streamer, self.ticks, self.last_render_tick);
                             continue;
                         }
 
@@ -407,8 +407,8 @@ new_el.vy = new_el.vy.saturating_add(24).min(127);
                         }
 
                         let e2 = self.chunks.get_element(target_x, target_y).unwrap_or(Element::empty());
-                        self.chunks.set_element_with_diff(world_x, world_y, e2, &mut self.queued_pixels, self.ticks, self.last_render_tick);
-                        self.chunks.set_element_with_diff(target_x, target_y, new_el, &mut self.queued_pixels, self.ticks, self.last_render_tick);
+                        self.chunks.set_element_with_diff(world_x, world_y, e2, &mut self.streamer, self.ticks, self.last_render_tick);
+                        self.chunks.set_element_with_diff(target_x, target_y, new_el, &mut self.streamer, self.ticks, self.last_render_tick);
                     }
                 }
             }

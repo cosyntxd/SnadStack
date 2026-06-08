@@ -466,9 +466,13 @@ impl GpuScreenManager {
     }
     pub fn create_pixel_streamer(&self) -> PixelStreamer {
         PixelStreamer::new(
+            self.device.clone(),
             self.queue.clone(),
             self.diff_buffer.clone(),
-            MAX_DIFF_PER_FRAME as u32
+            self.diff_params_buffer.clone(),
+            self.compute_pipeline.clone(),
+            self.compute_bind_group.clone(),
+            MAX_DIFF_PER_FRAME
         )
     }
 
@@ -548,29 +552,13 @@ impl GpuScreenManager {
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let diff_count = diffs.len();
-        if diff_count > 0 {
-            self.queue
-                .write_buffer(&self.diff_buffer, 0, bytemuck::cast_slice(diffs));
-            let params = ComputeParams {
-                count: diff_count as u32,
-                _pad: [0; 3],
-            };
-            self.queue
-                .write_buffer(&self.diff_params_buffer, 0, bytemuck::cast_slice(&[params]));
-        }
+let diff_count = diffs.len(); // Diffs are handled via PixelStreamer now
 
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-        // 1. Compute Pass
-        if diff_count > 0 {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
-            cpass.set_pipeline(&self.compute_pipeline);
-            cpass.set_bind_group(0, &self.compute_bind_group, &[]);
-            cpass.dispatch_workgroups((diff_count as u32 + 63) / 64, 1, 1);
-        }
+// Compute Pass removed (handled by PixelStreamer)
 
         // 2. Render Pass
         {
@@ -610,53 +598,87 @@ impl GpuScreenManager {
 }
 
 pub struct PixelStreamer {
+    device: wgpu::Device,
     queue: wgpu::Queue,
     diff_buffer: wgpu::Buffer,
+    diff_params_buffer: wgpu::Buffer,
+    compute_pipeline: wgpu::ComputePipeline,
+    compute_bind_group: wgpu::BindGroup,
 
-    current_count: u32,
-    max_capacity: u32,
+    pub current_diffs: Vec<PixelDiff>,
+    max_capacity: usize,
 }
 
 impl PixelStreamer {
-    pub fn new(queue: wgpu::Queue, diff_buffer: wgpu::Buffer, max_capacity: u32) -> Self {
+    pub fn new(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        diff_buffer: wgpu::Buffer,
+        diff_params_buffer: wgpu::Buffer,
+        compute_pipeline: wgpu::ComputePipeline,
+        compute_bind_group: wgpu::BindGroup,
+        max_capacity: usize,
+    ) -> Self {
         Self {
+            device,
             queue,
             diff_buffer,
-            current_count: 0,
+            diff_params_buffer,
+            compute_pipeline,
+            compute_bind_group,
+            current_diffs: Vec::with_capacity(max_capacity),
             max_capacity,
         }
     }
+
     pub fn add_pixels(&mut self, diffs: &[PixelDiff]) {
-        if diffs.is_empty() {
+        for diff in diffs {
+            self.current_diffs.push(*diff);
+            if self.current_diffs.len() >= self.max_capacity {
+                self.flush();
+            }
+        }
+    }
+
+    pub fn add_pixel(&mut self, diff: PixelDiff) {
+        self.current_diffs.push(diff);
+        if self.current_diffs.len() >= self.max_capacity {
+            self.flush();
+        }
+    }
+
+    pub fn flush(&mut self) {
+        let diff_count = self.current_diffs.len();
+        if diff_count == 0 {
             return;
         }
-
-        let start_idx = self.current_count as usize;
-        let end_idx = start_idx + diffs.len();
-
-        if end_idx > self.max_capacity as usize {
-            println!("Warning: Dropping diffs! Exceeded max capacity ({})", self.max_capacity);
-            return;
-        }
-
-        let offset = (start_idx * mem::size_of::<PixelDiff>()) as u64;
 
         self.queue.write_buffer(
             &self.diff_buffer,
-            offset,
-            bytemuck::cast_slice(diffs),
+            0,
+            bytemuck::cast_slice(&self.current_diffs),
         );
 
-        self.current_count = end_idx as u32;
+        let params = ComputeParams {
+            count: diff_count as u32,
+            _pad: [0; 3],
+        };
+        self.queue.write_buffer(
+            &self.diff_params_buffer,
+            0,
+            bytemuck::cast_slice(&[params]),
+        );
 
-        self.queue.submit(None);
-    }
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-    pub fn current_count(&self) -> u32 {
-        self.current_count
-    }
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            cpass.set_pipeline(&self.compute_pipeline);
+            cpass.set_bind_group(0, &self.compute_bind_group, &[]);
+            cpass.dispatch_workgroups((diff_count as u32 + 63) / 64, 1, 1);
+        }
 
-    pub fn reset(&mut self) {
-        self.current_count = 0;
+        self.queue.submit(Some(encoder.finish()));
+        self.current_diffs.clear();
     }
 }

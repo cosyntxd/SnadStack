@@ -290,7 +290,7 @@ impl ChunkManager {
         world_x: i32,
         world_y: i32,
         mut element: Element,
-        diffs: &mut Vec<PixelDiff>,
+        streamer: &mut Option<crate::render::PixelStreamer>,
         current_time: u32,
         last_render_tick: u32,
     ) {
@@ -303,39 +303,43 @@ impl ChunkManager {
         if had_diff {
             element.update_index = old_el.update_index;
             if let Some((t_id, lx, ly)) = self.set_element(world_x, world_y, element) {
-                diffs[element.update_index as usize] = PixelDiff {
-                    local_x: lx,
-                    local_y: ly,
-                    tile_id: t_id,
-                    r: element.rgb[0],
-                    g: element.rgb[1],
-                    b: element.rgb[2],
-                    a: if matches!(element.material, crate::element::CellType::Air) {
-                        0
-                    } else {
-                        255
-                    },
-                    _padding: 0,
-                };
+                if let Some(s) = streamer {
+                    s.add_pixel(PixelDiff {
+                        local_x: lx,
+                        local_y: ly,
+                        tile_id: t_id,
+                        r: element.rgb[0],
+                        g: element.rgb[1],
+                        b: element.rgb[2],
+                        a: if matches!(element.material, crate::element::CellType::Air) {
+                            0
+                        } else {
+                            255
+                        },
+                        _padding: 0,
+                    });
+                }
             }
         } else {
-            let diff_idx = diffs.len() as u32;
+            let diff_idx = 0 as u32;
             element.update_index = diff_idx;
             if let Some((t_id, lx, ly)) = self.set_element(world_x, world_y, element) {
-                diffs.push(PixelDiff {
-                    local_x: lx,
-                    local_y: ly,
-                    tile_id: t_id,
-                    r: element.rgb[0],
-                    g: element.rgb[1],
-                    b: element.rgb[2],
-                    a: if matches!(element.material, crate::element::CellType::Air) {
-                        0
-                    } else {
-                        255
-                    },
-                    _padding: 0,
-                });
+                if let Some(s) = streamer {
+                    s.add_pixel(PixelDiff {
+                        local_x: lx,
+                        local_y: ly,
+                        tile_id: t_id,
+                        r: element.rgb[0],
+                        g: element.rgb[1],
+                        b: element.rgb[2],
+                        a: if matches!(element.material, crate::element::CellType::Air) {
+                            0
+                        } else {
+                            255
+                        },
+                        _padding: 0,
+                    });
+                }
             }
         }
     }
@@ -346,15 +350,15 @@ impl ChunkManager {
         y1: i32,
         x2: i32,
         y2: i32,
-        diffs: &mut Vec<PixelDiff>,
+        streamer: &mut Option<crate::render::PixelStreamer>,
         current_time: u32,
         last_render_tick: u32,
     ) {
         let e1 = self.get_element(x1, y1).unwrap_or(Element::empty());
         let e2 = self.get_element(x2, y2).unwrap_or(Element::empty());
 
-        self.set_element_with_diff(x1, y1, e2, diffs, current_time, last_render_tick);
-        self.set_element_with_diff(x2, y2, e1, diffs, current_time, last_render_tick);
+        self.set_element_with_diff(x1, y1, e2, streamer, current_time, last_render_tick);
+        self.set_element_with_diff(x2, y2, e1, streamer, current_time, last_render_tick);
     }
     #[inline(never)]
 

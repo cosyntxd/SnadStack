@@ -11,12 +11,12 @@ use chunks::{ChunkCommand, ChunkCoord, CHUNK_BYTE_SIZE, CHUNK_ELEMENTS};
 use element::{CellType, Element};
 use glam::Vec2;
 use render::{GpuScreenManager, TILE_SIZE};
-use world::World;
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::WindowBuilder;
+use world::World;
 
 struct ChunkRequest {
     coord: ChunkCoord,
@@ -80,6 +80,7 @@ fn main() {
 
     let mut gpu_manager = pollster::block_on(GpuScreenManager::new(window.clone()));
     let mut world = World::new();
+    world.streamer = Some(gpu_manager.create_pixel_streamer());
 
     let mut mouse_pos = PhysicalPosition::new(0.0, 0.0);
     let mut is_drawing = false;
@@ -158,13 +159,9 @@ fn main() {
                                 elements.push(el);
                             }
 
-                            world.physics.spawn_rigid_from_pixels(
-                                world_x,
-                                world_y,
-                                width,
-                                height,
-                                elements,
-                            );
+                            world
+                                .physics
+                                .spawn_rigid_from_pixels(world_x, world_y, width, height, elements);
                         }
 
                         if let PhysicalKey::Code(KeyCode::KeyB) = event.physical_key {
@@ -186,7 +183,7 @@ fn main() {
                                         base_x + x,
                                         base_y + y,
                                         el,
-                                        &mut world.queued_pixels,
+                                        &mut world.streamer,
                                         world.ticks,
                                         world.last_render_tick,
                                     );
@@ -213,8 +210,7 @@ fn main() {
                 WindowEvent::RedrawRequested => {
                     // 1. Process Loaded Chunks
                     while let Ok(result) = rx_res.try_recv() {
-                        if let Some(physical_id) = world.chunks.get_chunk_slot(result.coord)
-                        {
+                        if let Some(physical_id) = world.chunks.get_chunk_slot(result.coord) {
                             let slot = &mut world.chunks.physical_slots[physical_id as usize];
                             // Ensure the slot hasn't been reassigned to another coordinate while this one generated
                             if slot.current_coord == result.coord {
@@ -236,7 +232,10 @@ fn main() {
                     gpu_manager.update_camera(top_left_cam, world.zoom);
 
                     // 3. Update Chunk Visibility
-                    let commands = world.chunks.update(world.camera_pos, gpu_manager.size, world.zoom);
+                    let commands =
+                        world
+                            .chunks
+                            .update(world.camera_pos, gpu_manager.size, world.zoom);
 
                     for command in commands {
                         match command {
@@ -254,47 +253,33 @@ fn main() {
 
                     // 4. Handle Brush/Drawing logic
                     if is_drawing {
-                        handle_drawing(
-                            &mut world,
-                            mouse_pos,
-                            top_left_cam,
-                            place_material,
-                        );
+                        handle_drawing(&mut world, mouse_pos, top_left_cam, place_material);
                     }
 
                     // 5. Render to Screen
                     let instances = world.chunks.get_instances();
                     gpu_manager.upload_instances(&instances);
 
-                    let diff_count = world.queued_pixels.len();
-
-                    if diff_count >= 65536 {
-                        log::warn!(
-                            "Too many diffs ({}), truncating to 65535 to prevent panic",
-                            diff_count
-                        );
+                    if let Some(streamer) = &mut world.streamer {
+                        streamer.flush();
                     }
 
                     let render_result = gpu_manager.render(
                         instances.len() as u32,
-                        &world.queued_pixels[..diff_count.min(65535)],
+                        &[],
                     );
 
-                    if render_result.is_ok() {
-                        world.last_render_tick = world.ticks;
-                        world.queued_pixels.clear();
-                    } else {
-                        world.last_render_tick = world.ticks;
-                        world.queued_pixels.clear();
-                        match render_result {
-                            Err(wgpu::SurfaceError::Lost) => {
+                    world.last_render_tick = world.ticks;
+
+                    if let Err(e) = render_result {
+                        match e {
+                            wgpu::SurfaceError::Lost => {
                                 gpu_manager.resize(gpu_manager.size);
                             }
-                            Err(wgpu::SurfaceError::OutOfMemory) => target.exit(),
-                            Err(e) => {
+                            wgpu::SurfaceError::OutOfMemory => target.exit(),
+                            _ => {
                                 eprintln!("{:?}", e);
                             }
-                            _ => {}
                         }
                     }
 
@@ -390,7 +375,7 @@ fn handle_drawing(
                 base_x + dx,
                 base_y + dy,
                 el,
-                &mut world.queued_pixels,
+                &mut world.streamer,
                 world.ticks,
                 world.last_render_tick,
             );
