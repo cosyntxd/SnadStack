@@ -104,7 +104,9 @@ impl World {
                 _ => continue,
             };
 
-            let Some(rb) = self.physics.rigid_body_set.get(rb_handle) else { continue; };
+            let Some(rb) = self.physics.rigid_body_set.get_mut(rb_handle) else {
+                continue;
+            };
             let pos = rb.translation();
             let angle = rb.rotation().angle();
             let cos_a = angle.cos();
@@ -124,38 +126,36 @@ impl World {
                 0.0
             };
 
-            // Sample internal points to detect collision depth/normal
-            for ly in (0..body.height).step_by(1) {
-                for lx in (0..body.width).step_by(1) {
-                    if let Some(el) = body.get_element(lx, ly) {
-                        if !matches!(el.material, crate::element::CellType::Air) {
-                            // Transform to world
-                            let l_x = (lx as f32) - body.x_center_offset;
-                            let l_y = (ly as f32) - body.y_center_offset;
-                            let wx = pos.x + l_x * cos_a - l_y * sin_a;
-                            let wy = pos.y + l_x * sin_a + l_y * cos_a;
+            // Sample boundary points to detect collision depth/normal
+            for ly in 0..body.height {
+                for lx in 0..body.width {
+                    if !body.is_boundary(lx, ly) {
+                        continue;
+                    }
 
-                            let world_x = wx.round() as i32;
-                            let world_y = wy.round() as i32;
+                    // Transform to world coordinates
+                    let l_x = (lx as f32) - body.x_center_offset;
+                    let l_y = (ly as f32) - body.y_center_offset;
+                    let wx = pos.x + l_x * cos_a - l_y * sin_a;
+                    let wy = pos.y + l_x * sin_a + l_y * cos_a;
 
-                            // Check grid
-                            if is_solid(world_x, world_y, &self.chunks) > 0.0 {
-                                // Compute gradient to find surface normal
-                                // Normal points AWAY from the solid mass
-                                let nx = is_solid(world_x - 1, world_y, &self.chunks) - is_solid(world_x + 1, world_y, &self.chunks);
-                                let ny = is_solid(world_x, world_y - 1, &self.chunks) - is_solid(world_x, world_y + 1, &self.chunks);
+                    let world_x = wx.round() as i32;
+                    let world_y = wy.round() as i32;
 
-                                let mut normal = rapier2d::math::Vector::new(nx, ny);
-                                if normal.x == 0.0 && normal.y == 0.0 {
-                                    // If surrounded, push towards body center as fallback
-                                    normal = rapier2d::math::Vector::new(pos.x - wx, pos.y - wy);
-                                }
+                    // Check grid
+                    if is_solid(world_x, world_y, &self.chunks) > 0.0 {
+                        // Compute gradient to find surface normal (pointing away from solid mass)
+                        let nx = is_solid(world_x - 1, world_y, &self.chunks) - is_solid(world_x + 1, world_y, &self.chunks);
+                        let ny = is_solid(world_x, world_y - 1, &self.chunks) - is_solid(world_x, world_y + 1, &self.chunks);
 
-                                total_normal += normal;
-                                total_contact_points += rapier2d::math::Vector::new(wx, wy);
-                                hit_count += 1;
-                            }
+                        let mut normal = rapier2d::math::Vector::new(nx, ny);
+                        if normal.x == 0.0 && normal.y == 0.0 {
+                            normal = rapier2d::math::Vector::new(pos.x - wx, pos.y - wy);
                         }
+
+                        total_normal += normal;
+                        total_contact_points += rapier2d::math::Vector::new(wx, wy);
+                        hit_count += 1;
                     }
                 }
             }
@@ -167,99 +167,69 @@ impl World {
                 if final_normal.x != 0.0 || final_normal.y != 0.0 {
                     final_normal = final_normal.normalize();
                 } else {
-                    // Fallback straight up
                     final_normal = rapier2d::math::Vector::new(0.0, -1.0);
                 }
 
-                if let Some(rb) = self.physics.rigid_body_set.get_mut(rb_handle) {
-                    // --- REALISTIC COLLISION SOLVER ---
-                    // Tunable parameters (matching Rapier's standard physical properties)
-                    let restitution = 0.3;     // Bounciness (0.0 to 1.0)
-                    let friction = 0.6;        // Surface sliding friction
+                let r = rapier2d::math::Vector::new(avg_contact_point.x - pos.x, avg_contact_point.y - pos.y);
+                let v_lin = rb.linvel();
+                let omega = rb.angvel();
 
-                    // Stiffness acts as a penalty force to combat your 600.0 gravity sinking
-                    let stiffness = 250.0;
+                // Point velocity: v + w x r
+                let v_pt = rapier2d::math::Vector::new(
+                    v_lin.x - omega * r.y,
+                    v_lin.y + omega * r.x,
+                );
 
-                    let r = rapier2d::math::Vector::new(avg_contact_point.x - pos.x, avg_contact_point.y - pos.y);
+                let v_n = v_pt.dot(final_normal);
+                let mass = rb.mass();
+                let inertia = rb.mass_properties().local_mprops.principal_inertia();
+                let m_inv = if mass > 0.0 { 1.0 / mass } else { 0.0 };
+                let i_inv = if inertia > 0.0 { 1.0 / inertia } else { 0.0 };
 
-                    let v_lin = rb.linvel();
-                    let omega = rb.angvel();
+                let r_cross_n = r.x * final_normal.y - r.y * final_normal.x;
+                let effective_mass_n = m_inv + r_cross_n * r_cross_n * i_inv;
 
-                    // Point velocity: v + w x r
-                    let v_pt = rapier2d::math::Vector::new(
-                        v_lin.x - omega * r.y,
-                        v_lin.y + omega * r.x
-                    );
+                // 1. Resolve Velocity (Bounce)
+                let mut j_normal = 0.0;
+                if v_n < 0.0 {
+                    let bounce = if v_n.abs() > 20.0 { 0.1 } else { 0.0 }; // restitution = 0.1
+                    j_normal += -(1.0 + bounce) * v_n / effective_mass_n;
+                }
 
-                    let v_n = v_pt.dot(final_normal);
+                // 2. Resolve Penetration (Baumgarte Stabilization)
+                let penetration_depth = (hit_count as f32).sqrt();
+                let allowed_penetration = (penetration_depth - 0.2).max(0.0);
+                let bias_v = 0.3 * allowed_penetration * 50.0; // 0.3 bias_factor, 50.0 inv_dt
+                j_normal += bias_v / effective_mass_n;
 
-                    let mass = rb.mass();
-                    let inertia = rb.mass_properties().local_mprops.principal_inertia();
-                    let m_inv = if mass > 0.0 { 1.0 / mass } else { 0.0 };
-                    let i_inv = if inertia > 0.0 { 1.0 / inertia } else { 0.0 };
+                let normal_impulse = final_normal * j_normal;
+                rb.apply_impulse_at_point(normal_impulse, avg_contact_point.into(), true);
 
-                    let r_cross_n = r.x * final_normal.y - r.y * final_normal.x;
-                    let effective_mass_n = m_inv + r_cross_n * r_cross_n * i_inv;
+                // 3. Resolve Friction
+                let tangent = rapier2d::math::Vector::new(-final_normal.y, final_normal.x);
+                let v_t = v_pt.dot(tangent);
 
-                    // --- RIGID BAUMGARTE SOLVER ---
-                    let dt = 1.0 / 50.0;
-                    let inv_dt = 50.0;
-                    let restitution = 0.1; // Low bounce
-                    let friction_coeff = 0.6;
+                if v_t.abs() > 0.001 {
+                    let r_cross_t = r.x * tangent.y - r.y * tangent.x;
+                    let effective_mass_t = m_inv + r_cross_t * r_cross_t * i_inv;
+                    let j_tangent = -v_t / effective_mass_t;
 
-                    let mut j_normal = 0.0;
+                    let resting_j = mass * 600.0 * (1.0 / 50.0); // gravity = 600, dt = 1/50
+                    let max_friction = 0.6 * (j_normal.abs() + resting_j); // friction_coeff = 0.6
 
-                    // 1. Resolve Velocity (Bounce)
-                    if v_n < 0.0 {
-                        let bounce = if v_n.abs() > 20.0 { restitution } else { 0.0 };
-                        j_normal += -(1.0 + bounce) * v_n / effective_mass_n;
-                    }
+                    let friction_impulse = tangent * j_tangent.clamp(-max_friction, max_friction);
+                    rb.apply_impulse_at_point(friction_impulse, avg_contact_point.into(), true);
+                }
 
-                    // 2. Resolve Penetration (Baumgarte Stabilization)
-                    // Push the body out based on overlap depth, but via velocity impulses
-                    let penetration_depth = (hit_count as f32).sqrt();
-                    let slop = 0.2; // Tiny allowable overlap
-                    let allowed_penetration = (penetration_depth - slop).max(0.0);
+                // 4. Settle / Sleeping damping
+                if rb.linvel().length() < 10.0 && rb.angvel().abs() < 0.5 {
+                    let mut final_v = rb.linvel().clone();
+                    final_v *= 0.5;
+                    rb.set_linvel(final_v, true);
 
-                    // Resolve 30% of the penetration per frame
-                    let bias_factor = 0.3;
-                    let bias_v = bias_factor * allowed_penetration * inv_dt;
-                    j_normal += bias_v / effective_mass_n;
-
-                    let normal_impulse = final_normal * j_normal;
-                    rb.apply_impulse_at_point(normal_impulse, avg_contact_point.into(), true);
-
-                    // --- FRICTION SOLVER ---
-                    let tangent = rapier2d::math::Vector::new(-final_normal.y, final_normal.x);
-                    let v_t = v_pt.dot(tangent);
-
-                    if v_t.abs() > 0.001 {
-                        let r_cross_t = r.x * tangent.y - r.y * tangent.x;
-                        let effective_mass_t = m_inv + r_cross_t * r_cross_t * i_inv;
-
-                        let j_tangent = -v_t / effective_mass_t;
-
-                        // Include resting gravity force so bodies don't slide on flat ground
-                        let resting_j = mass * 600.0 * dt;
-                        let max_friction = friction_coeff * (j_normal.abs() + resting_j);
-
-                        let j_tangent_clamped = j_tangent.clamp(-max_friction, max_friction);
-
-                        let friction_impulse = tangent * j_tangent_clamped;
-                        rb.apply_impulse_at_point(friction_impulse, avg_contact_point.into(), true);
-                    }
-
-                    // --- SETTLE / SLEEPING ---
-                    // If barely moving, strongly dampen to help Rapier put it to sleep
-                    if rb.linvel().length() < 10.0 && rb.angvel().abs() < 0.5 {
-                        let mut final_v = rb.linvel().clone();
-                        final_v *= 0.5;
-                        rb.set_linvel(final_v, true);
-
-                        let mut final_av = rb.angvel();
-                        final_av *= 0.5;
-                        rb.set_angvel(final_av, true);
-                    }
+                    let mut final_av = rb.angvel();
+                    final_av *= 0.5;
+                    rb.set_angvel(final_av, true);
                 }
             }
         }
